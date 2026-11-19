@@ -1,3 +1,5 @@
+import type { Note } from "./beats";
+
 export type CueSpeed = "slow" | "normal" | "fast";
 export type Mode = "hobby" | "pro";
 export type Difficulty = "normal" | "hard";
@@ -39,8 +41,8 @@ export type Counts = Record<Judgement, number>;
 
 type Sample = { x: number; y: number; t: number };
 
-/** A song to play along: when each light should be hit (ms from the start) and its length. */
-export type Song = { beats: number[]; durationMs: number };
+/** A song to play along: its notes (when and on which side to hit) and its length. */
+export type Song = { notes: Note[]; durationMs: number };
 
 export type GameState = {
   settings: Settings;
@@ -58,7 +60,7 @@ export type GameState = {
   /** Radius of the hand pointer in screen widths; it widens what counts as touching. */
   pointerRadius: number;
   song: Song | null;
-  /** Index of the next beat in `song.beats` that has no light yet. */
+  /** Index of the next note in `song.notes` that has no light yet. */
   nextBeat: number;
   ended: boolean;
 };
@@ -88,6 +90,8 @@ const PUNCH_WINDOW_MS = 200;
 const PUNCH_DISTANCE = 0.15;
 // Area reachable both seated and standing: center to upper part of the screen.
 const AREA = { minX: 0.2, maxX: 0.8, minY: 0.15, maxY: 0.6 };
+// Combo notes keep this far from the middle, so left and right are clearly apart.
+const SIDE_MARGIN = 0.05;
 
 export function createGame(
   settings: Settings,
@@ -145,18 +149,20 @@ export function stepGame(
   }
 
   const cueMs = CUE_MS[state.settings.cueSpeed];
-  const spawn = (hitAt: number) => {
-    lights.push(makeLight(state, nextId, hitAt - cueMs, hitAt, random, head));
+  const spawn = (hitAt: number, side: Note["side"] = "any") => {
+    lights.push(
+      makeLight(state, nextId, hitAt - cueMs, hitAt, side, random, head),
+    );
     nextId += 1;
   };
   if (state.song) {
     // Each light appears one cue before its beat, so the cue closes right on the beat.
-    const beats = state.song.beats;
+    const notes = state.song.notes;
     while (
-      nextBeat < beats.length &&
-      now >= state.startedAt + beats[nextBeat] - cueMs
+      nextBeat < notes.length &&
+      now >= state.startedAt + notes[nextBeat].at - cueMs
     ) {
-      spawn(state.startedAt + beats[nextBeat]);
+      spawn(state.startedAt + notes[nextBeat].at, notes[nextBeat].side);
       nextBeat += 1;
     }
   } else if (lights.length === 0 && now >= nextSpawnAt) {
@@ -209,6 +215,7 @@ function makeLight(
   id: number,
   spawnAt: number,
   hitAt: number,
+  side: Note["side"],
   random: () => number,
   head: Point | null,
 ): Light {
@@ -230,7 +237,7 @@ function makeLight(
     spawnAt,
     hitAt,
     kind: "hit",
-    x: AREA.minX + random() * (AREA.maxX - AREA.minX),
+    x: sideX(side, random()),
     y: AREA.minY + random() * (AREA.maxY - AREA.minY),
     radius: LIGHT_RADIUS,
   };
@@ -244,6 +251,18 @@ export function accuracyOf(counts: Counts): number {
 
 export function remainingMs(state: GameState): number {
   return Math.max(0, sessionMs(state) - (state.now - state.startedAt));
+}
+
+/** A position across the reachable area, kept to one half for combo notes. */
+function sideX(side: Note["side"], roll: number): number {
+  const mid = (AREA.minX + AREA.maxX) / 2;
+  const [from, to] =
+    side === "left"
+      ? [AREA.minX, mid - SIDE_MARGIN]
+      : side === "right"
+        ? [mid + SIDE_MARGIN, AREA.maxX]
+        : [AREA.minX, AREA.maxX];
+  return from + roll * (to - from);
 }
 
 function sessionMs(state: GameState): number {

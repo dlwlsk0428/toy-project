@@ -11,6 +11,7 @@ import {
   type GameState,
   type Hand,
   type Settings,
+  type Song,
 } from "@/features/punch-rhythm/game";
 
 // Places every light at the center of the reachable area.
@@ -334,7 +335,14 @@ describe("어려움 난이도", () => {
 });
 
 describe("노래 모드", () => {
-  const song = { beats: [2000, 2500, 3000], durationMs: 5000 };
+  const song: Song = {
+    notes: [
+      { at: 2000, side: "any" },
+      { at: 2500, side: "any" },
+      { at: 3000, side: "any" },
+    ],
+    durationMs: 5000,
+  };
 
   function startSong(): GameState {
     return stepGame(createGame(DEFAULT_SETTINGS, 0, 1, 0, song), 0, [], center);
@@ -369,6 +377,28 @@ describe("노래 모드", () => {
     expect(state.judged.at(-1)?.judgement).toBe("perfect");
     // The 3000 ms beat also appears now, one cue (1000 ms) before it.
     expect(state.lights.map((l) => l.hitAt)).toEqual([2500, 3000]);
+  });
+
+  test("왼쪽·오른쪽 노트는 화면의 그쪽 절반에 나온다", () => {
+    const sided: Song = {
+      notes: [
+        { at: 2000, side: "left" },
+        { at: 2300, side: "right" },
+      ],
+      durationMs: 5000,
+    };
+    for (const roll of [0, 0.5, 0.99]) {
+      let state = stepGame(
+        createGame(DEFAULT_SETTINGS, 0, 1, 0, sided),
+        0,
+        [],
+        () => roll,
+      );
+      state = stepGame(state, 1300, [], () => roll);
+      const [left, right] = state.lights;
+      expect(left.x).toBeLessThan(0.5);
+      expect(right.x).toBeGreaterThan(0.5);
+    }
   });
 
   test("노래가 끝나면 운동이 끝난다", () => {

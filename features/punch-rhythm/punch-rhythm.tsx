@@ -75,6 +75,7 @@ const DIFFICULTY_LABELS: Record<
   },
 };
 
+const SYNC_LIMIT_MS = 300;
 const MIN_MINUTES = 1;
 const MAX_MINUTES = 10;
 
@@ -121,6 +122,14 @@ export function PunchRhythm() {
   const [song, setSong] = useState<SongState>({ name: "none" });
   const audioRef = useRef<AudioContext | null>(null);
   const stopSongRef = useRef<() => void>(() => {});
+  // Song mode runs on the song's own clock; null means the computer clock.
+  const songClockRef = useRef<(() => number) | null>(null);
+  const [syncMs, setSyncMs] = useState(0);
+  const syncRef = useRef(0);
+  const changeSync = (value: number) => {
+    syncRef.current = value;
+    setSyncMs(value);
+  };
   const [aspect, setAspect] = useState(9 / 16);
   const [pointerSize, setPointerSize] = useState<PointerSize>("medium");
   const [offsets, setOffsets] = useState<Offsets>(NO_OFFSETS);
@@ -227,11 +236,18 @@ export function PunchRhythm() {
       // The game starts only when the player punches the start mark (or clicks it).
       let state: GameState | null = null;
       startRequestedRef.current = false;
+      songClockRef.current = null;
       const loop = () => {
-        const now = performance.now();
+        const frameAt = performance.now();
+        // With a song, game time is the song's time (minus the player's sync shift).
+        const gameNow = () => {
+          const songClock = songClockRef.current;
+          return songClock ? songClock() - syncRef.current : frameAt;
+        };
         // The tracker throws on a frame without size, e.g. while the stream is switching.
         const ready = video.readyState >= 2 && video.videoWidth > 0;
-        const tracked = (ready && trackerRef.current?.detect(video, now)) || {
+        const tracked = (ready &&
+          trackerRef.current?.detect(video, frameAt)) || {
           hands: [],
           head: null,
         };
@@ -253,13 +269,18 @@ export function PunchRhythm() {
             frameRef.current = requestAnimationFrame(loop);
             return;
           }
-          state = createGame(settings, now, ratio, radius, loaded);
           if (loaded && audioRef.current) {
-            stopSongRef.current = playSong(audioRef.current, loaded.buffer);
+            const playing = playSong(audioRef.current, loaded.buffer);
+            stopSongRef.current = playing.stop;
+            songClockRef.current = playing.songMs;
+            // The song starts at its own 0 ms, slightly after this frame.
+            state = createGame(settings, 0, ratio, radius, loaded);
+          } else {
+            state = createGame(settings, frameAt, ratio, radius, null);
           }
           setPhase({ name: "playing" });
         }
-        state = stepGame(state, now, seen, Math.random, tracked.head);
+        state = stepGame(state, gameNow(), seen, Math.random, tracked.head);
         setGame(state);
         if (state.ended) {
           stopAll();
@@ -287,6 +308,8 @@ export function PunchRhythm() {
         onStart={start}
         error={phase.name === "error" ? phase.message : null}
         song={song}
+        syncMs={syncMs}
+        onSyncChange={changeSync}
         onPickSong={pickSong}
         onClearSong={() => setSong({ name: "none" })}
       />
@@ -536,6 +559,8 @@ function SetupCard({
   onStart,
   error,
   song,
+  syncMs,
+  onSyncChange,
   onPickSong,
   onClearSong,
 }: {
@@ -544,6 +569,8 @@ function SetupCard({
   onStart: () => void;
   error: string | null;
   song: SongState;
+  syncMs: number;
+  onSyncChange: (value: number) => void;
   onPickSong: (file: File) => void;
   onClearSong: () => void;
 }) {
@@ -594,6 +621,7 @@ function SetupCard({
           description={DIFFICULTY_LABELS[settings.difficulty].description}
         />
         <SongField song={song} onPick={onPickSong} onClear={onClearSong} />
+        {loaded && <SyncField value={syncMs} onChange={onSyncChange} />}
         <MinutesField
           minutes={settings.minutes}
           onChange={(minutes) => onChange({ ...settings, minutes })}
@@ -619,6 +647,37 @@ function SetupCard({
         <HowTo />
       </CardFooter>
     </Card>
+  );
+}
+
+function SyncField({
+  value,
+  onChange,
+}: {
+  value: number;
+  onChange: (value: number) => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <Label htmlFor="sync">
+        싱크 보정: {value > 0 ? "+" : ""}
+        {value}ms
+      </Label>
+      <input
+        id="sync"
+        type="range"
+        min={-SYNC_LIMIT_MS}
+        max={SYNC_LIMIT_MS}
+        step={10}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
+        className="w-full accent-primary"
+      />
+      <p className="text-sm text-muted-foreground">
+        불빛이 박자보다 먼저 맞는 것 같으면 오른쪽(+)으로, 늦게 맞으면
+        왼쪽(−)으로 옮기세요. 블루투스 이어폰은 보통 +로 맞춥니다.
+      </p>
+    </div>
   );
 }
 

@@ -5,8 +5,10 @@ const MAX_BPM = 180;
 // Most songs sit near this tempo; it breaks ties between a tempo and its half or double.
 const TYPICAL_BPM = 120;
 
-// Lights come at least this far apart, so punching keeps a boxing pace.
-const MIN_GAP_SEC = 0.6;
+// Lights come at least this far apart (a quick one-two), so punching stays possible.
+const MIN_GAP_SEC = 0.3;
+// A hit at least this share of the loudest one marks where the music starts.
+const START_SHARE = 0.2;
 // No lights in the first seconds, so the first cue has time to appear.
 const LEAD_IN_SEC = 2;
 
@@ -17,7 +19,7 @@ const LEAD_IN_SEC = 2;
 export function detectBeats(
   samples: Float32Array,
   sampleRate: number,
-): { bpm: number; firstBeatSec: number } {
+): { bpm: number; firstBeatSec: number; startSec: number } {
   const onset = onsetStrength(samples, sampleRate);
 
   // Tempo: the beat period at which the onset curve best matches itself shifted.
@@ -58,9 +60,15 @@ export function detectBeats(
     }
   }
 
+  // Where the music starts: the first hit that is clearly louder than the silence.
+  let peak = 0;
+  for (const value of onset) peak = Math.max(peak, value);
+  const startFrame = onset.findIndex((value) => value >= peak * START_SHARE);
+
   return {
     bpm: 60 / (period * FRAME_SEC),
     firstBeatSec: bestOffset * FRAME_SEC,
+    startSec: Math.max(0, startFrame) * FRAME_SEC,
   };
 }
 
@@ -84,21 +92,76 @@ function onsetStrength(
   return onset;
 }
 
+export type Note = {
+  /** When the light should be hit, in ms from the song's start. */
+  at: number;
+  /** Combo notes go to one side of the screen so the two hands alternate. */
+  side: "left" | "right" | "any";
+};
+
+// Rhythm patterns for one bar of 8 slots (eighth notes at a normal tempo); 1 = a light.
+const PATTERNS = [
+  [1, 0, 0, 0, 1, 0, 0, 0], // two straight punches
+  [1, 0, 1, 0, 1, 0, 1, 0], // one on every beat
+  [1, 0, 0, 0, 1, 1, 0, 0], // one-two on the third beat
+  [1, 1, 0, 0, 1, 0, 0, 0], // one-two on the first beat
+  [1, 0, 1, 0, 1, 1, 0, 0], // mixed
+];
+// Two lights closer than this form a combo (left then right).
+const COMBO_GAP_SEC = 0.5;
+
 /**
- * When lights should be hit (ms from the song's start): on every beat, or every
- * second or fourth beat when the tempo is too fast to punch on each one.
+ * Where lights go in a song: a rhythm pattern per bar on the song's beat grid.
+ * One slot is an eighth note, or longer when the song is too fast to punch that often.
+ * The same song always gets the same patterns.
  */
-export function beatSchedule(song: {
+export function noteSchedule(song: {
   bpm: number;
   firstBeatSec: number;
   durationSec: number;
-}): number[] {
+  startSec: number;
+}): Note[] {
   const beat = 60 / song.bpm;
-  const step = beat >= MIN_GAP_SEC ? 1 : beat * 2 >= MIN_GAP_SEC ? 2 : 4;
-  const gap = beat * step;
-  let t = song.firstBeatSec;
-  while (t < LEAD_IN_SEC) t += gap;
+  const slot = [beat / 2, beat, beat * 2, beat * 4].find(
+    (s) => s >= MIN_GAP_SEC - 1e-9,
+  )!;
+  const barSec = slot * 8;
+  const random = seededRandom(Math.round(song.bpm * 100));
+  const from = Math.max(LEAD_IN_SEC, song.startSec);
+
+  // Start the grid at the bar line just before 0 so bars stay aligned with the first beat.
+  const origin =
+    song.firstBeatSec - Math.ceil(song.firstBeatSec / barSec) * barSec;
   const times: number[] = [];
-  for (; t < song.durationSec; t += gap) times.push(t * 1000);
-  return times;
+  let pattern = PATTERNS[0];
+  for (let i = 0; ; i++) {
+    const t = origin + i * slot;
+    if (t >= song.durationSec) break;
+    if (i % 8 === 0) pattern = PATTERNS[Math.floor(random() * PATTERNS.length)];
+    if (pattern[i % 8] && t >= from) times.push(t);
+  }
+
+  const notes: Note[] = times.map((t) => ({ at: t * 1000, side: "any" }));
+  for (let i = 1; i < notes.length; i++) {
+    if (
+      times[i] - times[i - 1] < COMBO_GAP_SEC &&
+      notes[i - 1].side === "any"
+    ) {
+      notes[i - 1].side = "left";
+      notes[i].side = "right";
+    }
+  }
+  return notes;
+}
+
+/** A small deterministic random generator (mulberry32). */
+function seededRandom(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
 }

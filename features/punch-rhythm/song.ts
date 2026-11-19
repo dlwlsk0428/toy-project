@@ -1,4 +1,4 @@
-import { beatSchedule, detectBeats } from "./beats";
+import { detectBeats, noteSchedule } from "./beats";
 import type { Song } from "./game";
 
 // Kick drums live below this frequency, so the beat stands out after filtering.
@@ -30,7 +30,7 @@ export async function loadSong(file: File): Promise<LoadedSong> {
   source.start();
   const filtered = await offline.startRendering();
 
-  const { bpm, firstBeatSec } = detectBeats(
+  const { bpm, firstBeatSec, startSec } = detectBeats(
     filtered.getChannelData(0),
     ANALYSIS_RATE,
   );
@@ -39,24 +39,39 @@ export async function loadSong(file: File): Promise<LoadedSong> {
     bpm,
     buffer,
     durationMs: buffer.duration * 1000,
-    beats: beatSchedule({ bpm, firstBeatSec, durationSec: buffer.duration }),
+    notes: noteSchedule({
+      bpm,
+      firstBeatSec,
+      startSec,
+      durationSec: buffer.duration,
+    }),
   };
 }
 
-/** Plays a decoded song from the start on an already running audio context. */
+/**
+ * Plays a decoded song from the start, `delaySec` from now, and returns a clock:
+ * ms of the song as the player hears it (output delay subtracted), plus a stop function.
+ */
 export function playSong(
   context: AudioContext,
   buffer: AudioBuffer,
-): () => void {
+  delaySec = 0.1,
+): { songMs: () => number; stop: () => void } {
   const source = context.createBufferSource();
   source.buffer = buffer;
   source.connect(context.destination);
-  source.start();
-  return () => {
-    try {
-      source.stop();
-    } catch {
-      // Already stopped.
-    }
+  const begin = context.currentTime + delaySec;
+  source.start(begin);
+  // Speakers and especially wireless earphones play a little after the audio clock.
+  const latency = context.outputLatency || context.baseLatency || 0;
+  return {
+    songMs: () => (context.currentTime - begin - latency) * 1000,
+    stop: () => {
+      try {
+        source.stop();
+      } catch {
+        // Already stopped.
+      }
+    },
   };
 }
