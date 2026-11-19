@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { Fanfare } from "@/components/fanfare";
+import { RecordBoard } from "@/components/record-board";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -390,6 +392,7 @@ export function PunchRhythm() {
     return (
       <ResultCard
         game={phase.game}
+        songName={loaded?.name ?? null}
         onRetry={start}
         onBack={() => setPhase({ name: "setup" })}
       />
@@ -762,6 +765,15 @@ function SetupCard({
   );
 }
 
+/** The latest start (ms, on the 5-second step) that keeps a section of this length inside the song. */
+function maxSectionStart(durationMs: number, lengthMs: number): number {
+  const room =
+    lengthMs >= durationMs
+      ? durationMs - SECTION_STEP_MS
+      : durationMs - lengthMs;
+  return Math.max(0, Math.floor(room / SECTION_STEP_MS) * SECTION_STEP_MS);
+}
+
 function SectionField({
   durationMs,
   section,
@@ -771,29 +783,17 @@ function SectionField({
   section: Section;
   onChange: (section: Section) => void;
 }) {
-  const lastStart = Math.max(
-    0,
-    Math.floor((durationMs - SECTION_STEP_MS) / SECTION_STEP_MS) *
-      SECTION_STEP_MS,
-  );
   const end = Math.min(section.startMs + section.lengthMs, durationMs);
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-col gap-2">
-        <Label htmlFor="section-start">
+        <Label id="section-label">
           구간: {formatTime(section.startMs)} – {formatTime(end)}
         </Label>
-        <input
-          id="section-start"
-          type="range"
-          min={0}
-          max={lastStart}
-          step={SECTION_STEP_MS}
-          value={Math.min(section.startMs, lastStart)}
-          onChange={(event) =>
-            onChange({ ...section, startMs: Number(event.target.value) })
-          }
-          className="w-full accent-primary"
+        <SectionBar
+          durationMs={durationMs}
+          section={section}
+          onStartChange={(startMs) => onChange({ ...section, startMs })}
         />
       </div>
       <ChoiceGroup
@@ -803,9 +803,104 @@ function SectionField({
           label: option.label,
         }))}
         value={String(section.lengthMs)}
-        onChange={(value) => onChange({ ...section, lengthMs: Number(value) })}
-        description="긴 노래도 고른 구간만 짧게 할 수 있습니다. 시작 위치는 5초 단위로 옮깁니다."
+        onChange={(value) => {
+          const lengthMs = Number(value);
+          onChange({
+            lengthMs,
+            startMs: Math.min(
+              section.startMs,
+              maxSectionStart(durationMs, lengthMs),
+            ),
+          });
+        }}
+        description="파란 막대가 고른 구간입니다. 막대를 끌거나 방향키로 5초씩 옮기세요."
       />
+    </div>
+  );
+}
+
+/** The whole song as a track, with the chosen section as a bar you drag along it. */
+function SectionBar({
+  durationMs,
+  section,
+  onStartChange,
+}: {
+  durationMs: number;
+  section: Section;
+  onStartChange: (startMs: number) => void;
+}) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const grabRef = useRef<number | null>(null);
+  const maxStart = maxSectionStart(durationMs, section.lengthMs);
+  const startMs = Math.min(section.startMs, maxStart);
+  const endMs = Math.min(startMs + section.lengthMs, durationMs);
+
+  const msAt = (clientX: number) => {
+    const rect = trackRef.current!.getBoundingClientRect();
+    return ((clientX - rect.left) / rect.width) * durationMs;
+  };
+  const moveTo = (ms: number) => {
+    const snapped = Math.round(ms / SECTION_STEP_MS) * SECTION_STEP_MS;
+    onStartChange(Math.min(maxStart, Math.max(0, snapped)));
+  };
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div
+        ref={trackRef}
+        className="relative h-10 touch-none rounded-lg bg-muted"
+        onPointerDown={(event) => {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          const at = msAt(event.clientX);
+          // Grab the bar where it was pressed; pressing outside it centres the bar there.
+          grabRef.current =
+            at >= startMs && at <= endMs ? at - startMs : (endMs - startMs) / 2;
+          moveTo(at - grabRef.current);
+        }}
+        onPointerMove={(event) => {
+          if (grabRef.current !== null)
+            moveTo(msAt(event.clientX) - grabRef.current);
+        }}
+        onPointerUp={() => (grabRef.current = null)}
+        onPointerCancel={() => (grabRef.current = null)}
+      >
+        <div
+          role="slider"
+          tabIndex={0}
+          aria-labelledby="section-label"
+          aria-valuemin={0}
+          aria-valuemax={maxStart}
+          aria-valuenow={startMs}
+          aria-valuetext={`${formatTime(startMs)}부터 ${formatTime(endMs - startMs)}`}
+          className="absolute inset-y-0 cursor-grab rounded-lg bg-primary/80 outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50 active:cursor-grabbing"
+          style={{
+            left: `${(startMs / durationMs) * 100}%`,
+            width: `${((endMs - startMs) / durationMs) * 100}%`,
+          }}
+          onKeyDown={(event) => {
+            const step = {
+              ArrowLeft: -1,
+              ArrowDown: -1,
+              ArrowRight: 1,
+              ArrowUp: 1,
+            }[event.key];
+            if (step) {
+              event.preventDefault();
+              moveTo(startMs + step * SECTION_STEP_MS);
+            } else if (event.key === "Home") {
+              event.preventDefault();
+              moveTo(0);
+            } else if (event.key === "End") {
+              event.preventDefault();
+              moveTo(maxStart);
+            }
+          }}
+        />
+      </div>
+      <div className="flex justify-between text-xs text-muted-foreground tabular-nums">
+        <span>0:00</span>
+        <span>{formatTime(durationMs)}</span>
+      </div>
     </div>
   );
 }
@@ -972,18 +1067,39 @@ function ChoiceGroup<T extends string>({
   );
 }
 
+type RhythmRecord = {
+  name: string;
+  at: number;
+  accuracy: number;
+  /** Settings (and song) of the run, as shown to the player. */
+  label: string;
+};
+
+const RHYTHM_RECORDS_KEY = "punch:rhythm-records";
+
 function ResultCard({
   game,
+  songName,
   onRetry,
   onBack,
 }: {
   game: GameState;
+  songName: string | null;
   onRetry: () => void;
   onBack: () => void;
 }) {
   const { counts } = game;
+  const label = [
+    CUE_SPEED_LABELS[game.settings.cueSpeed],
+    MODE_LABELS[game.settings.mode].label,
+    DIFFICULTY_LABELS[game.settings.difficulty].label,
+    songName ? `♪ ${songName}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <Card className="w-full max-w-xl">
+      <Fanfare />
       <CardHeader>
         <CardTitle>운동 끝!</CardTitle>
         <CardDescription>
@@ -1012,6 +1128,20 @@ function ResultCard({
               </div>
             ))}
         </dl>
+        <RecordBoard<RhythmRecord>
+          storageKey={RHYTHM_RECORDS_KEY}
+          makeRecord={(name, at) => ({
+            name,
+            at,
+            accuracy: accuracyOf(counts),
+            label,
+          })}
+          compare={(a, b) => b.accuracy - a.accuracy || a.at - b.at}
+          show={(record) => ({
+            value: `${record.accuracy.toFixed(1)}%`,
+            detail: record.label,
+          })}
+        />
       </CardContent>
       <CardFooter className="gap-2">
         <Button size="lg" onClick={onRetry}>

@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState } from "react";
 import QRCode from "qrcode";
 
+import { Fanfare } from "@/components/fanfare";
+import { RecordBoard } from "@/components/record-board";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -24,6 +26,9 @@ type Stage =
   | { name: "result"; summary: ReturnType<typeof summarize> };
 
 const COUNTDOWN_S = 3;
+const POWER_RECORDS_KEY = "punch:power-records";
+
+type PowerRecord = ReturnType<typeof summarize> & { name: string; at: number };
 
 /**
  * Bonus game on the computer: connect a phone by QR, then punch as hard as you can for 10 s.
@@ -197,6 +202,7 @@ function BonusSession() {
         </div>
       )}
 
+      {stage.name === "result" && <Fanfare />}
       {stage.name === "result" && (
         <dl className="grid grid-cols-3 gap-2 text-center">
           <Stat
@@ -215,6 +221,18 @@ function BonusSession() {
         {stage.name === "connected" && <Button onClick={begin}>시작</Button>}
         {stage.name === "result" && <Button onClick={begin}>다시 하기</Button>}
       </DialogFooter>
+      {stage.name === "result" && (
+        <RecordBoard<PowerRecord>
+          key={stage.summary.count + ":" + stage.summary.maxG}
+          storageKey={POWER_RECORDS_KEY}
+          makeRecord={(name, at) => ({ name, at, ...stage.summary })}
+          compare={(a, b) => b.maxG - a.maxG || a.at - b.at}
+          show={(record) => ({
+            value: `${record.maxG.toFixed(1)}G`,
+            detail: `평균 ${record.averageG.toFixed(1)}G · ${record.count}번`,
+          })}
+        />
+      )}
     </>
   );
 }
