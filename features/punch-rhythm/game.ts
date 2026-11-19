@@ -67,7 +67,12 @@ export type GameState = {
   song: Song | null;
   /** Index of the next note in `song.notes` that has no light yet. */
   nextBeat: number;
+  /** When set, the run stops once the head has been out of sight for HEAD_LOST_MS. */
+  requireHead: boolean;
+  headSeenAt: number;
   ended: boolean;
+  /** Why the run ended: time ran out, or the head was gone too long (no record is kept). */
+  endReason: "time" | "head-lost" | null;
 };
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -81,6 +86,11 @@ export const CUE_MS: Record<CueSpeed, number> = {
   normal: 1000,
   fast: 700,
 };
+
+/** Head out of sight this long ends the run, so covering the camera cannot farm points. */
+export const HEAD_LOST_MS = 5000;
+/** After this long without a head the player is warned. */
+export const HEAD_WARN_MS = 2000;
 
 const PERFECT_MS = 100;
 const GOOD_MS = 200;
@@ -104,6 +114,7 @@ export function createGame(
   aspect = 1,
   pointerRadius = 0,
   song: Song | null = null,
+  requireHead = false,
 ): GameState {
   return {
     settings,
@@ -121,7 +132,10 @@ export function createGame(
     pointerRadius,
     song,
     nextBeat: 0,
+    requireHead,
+    headSeenAt: now,
     ended: false,
+    endReason: null,
   };
 }
 
@@ -134,7 +148,18 @@ export function stepGame(
 ): GameState {
   if (state.ended) return state;
   if (now - state.startedAt >= sessionMs(state)) {
-    return { ...state, now, lights: [], ended: true };
+    return { ...state, now, lights: [], ended: true, endReason: "time" };
+  }
+  const headSeenAt = head ? now : state.headSeenAt;
+  if (state.requireHead && now - headSeenAt >= HEAD_LOST_MS) {
+    return {
+      ...state,
+      now,
+      headSeenAt,
+      lights: [],
+      ended: true,
+      endReason: "head-lost",
+    };
   }
 
   const history = recordHands(state.history, hands, now);
@@ -192,6 +217,7 @@ export function stepGame(
     combo,
     maxCombo,
     history,
+    headSeenAt,
   };
 }
 
@@ -270,6 +296,11 @@ function makeLight(
 export function accuracyOf(judged: JudgedLight[]): number {
   if (judged.length === 0) return 0;
   return judged.reduce((sum, j) => sum + j.points, 0) / judged.length;
+}
+
+/** How long the head has been out of sight (0 while it is seen or not required). */
+export function headLostMs(state: GameState): number {
+  return state.requireHead ? Math.max(0, state.now - state.headSeenAt) : 0;
 }
 
 export function remainingMs(state: GameState): number {

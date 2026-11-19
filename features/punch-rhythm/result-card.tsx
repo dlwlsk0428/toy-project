@@ -18,6 +18,7 @@ import { cn } from "@/lib/utils";
 
 import {
   accuracyOf,
+  HEAD_LOST_MS,
   type GameState,
   type Judgement,
   type Settings,
@@ -235,3 +236,37 @@ export function ResultCard({
   );
 }
 
+/** Shown instead of the result when the head was out of sight too long: nothing is saved. */
+export function StoppedCard({
+  onRetry,
+  onBack,
+}: {
+  onRetry: () => void;
+  onBack: () => void;
+}) {
+  return (
+    <Card className="w-full max-w-xl">
+      <CardHeader>
+        <CardTitle>운동 중단</CardTitle>
+        <CardDescription>
+          얼굴이 {HEAD_LOST_MS / 1000}초 넘게 보이지 않아 운동을 멈췄습니다.
+          이번 운동은 기록에 남지 않습니다.
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <p className="rounded-lg bg-muted p-3 text-sm text-muted-foreground">
+          얼굴과 두 손이 함께 화면에 들어오도록 카메라와 거리를 맞춘 뒤 다시
+          시작하세요.
+        </p>
+      </CardContent>
+      <CardFooter className="flex-wrap gap-2">
+        <Button size="lg" className="flex-1" onClick={onRetry}>
+          다시 하기
+        </Button>
+        <Button size="lg" variant="outline" onClick={onBack}>
+          설정 바꾸기
+        </Button>
+      </CardFooter>
+    </Card>
+  );
+}

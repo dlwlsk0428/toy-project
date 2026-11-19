@@ -20,6 +20,9 @@ import {
   accuracyOf,
   createGame,
   DEFAULT_SETTINGS,
+  HEAD_LOST_MS,
+  HEAD_WARN_MS,
+  headLostMs,
   isHandOnTarget,
   remainingMs,
   START_TARGET,
@@ -42,7 +45,7 @@ import {
   JUDGEMENT_LABELS,
   MODE_LABELS,
 } from "./labels";
-import { ResultCard } from "./result-card";
+import { ResultCard, StoppedCard } from "./result-card";
 import { sliceSong } from "./beats";
 import { loadSong, playSong, type LoadedSong } from "./song";
 
@@ -257,9 +260,8 @@ export function PunchRhythm() {
         audio: false,
       });
       streamRef.current = stream;
-      trackerRef.current = await createHandTracker({
-        withHead: settings.difficulty === "hard",
-      });
+      // The head is always tracked: red lights need it, and a run stops when it is gone.
+      trackerRef.current = await createHandTracker({ withHead: true });
 
       const video = videoRef.current!;
       video.srcObject = stream;
@@ -312,9 +314,9 @@ export function PunchRhythm() {
             stopSongRef.current = playing.stop;
             songClockRef.current = playing.songMs;
             // The song starts at its own 0 ms, slightly after this frame.
-            state = createGame(settings, 0, ratio, radius, part);
+            state = createGame(settings, 0, ratio, radius, part, true);
           } else {
-            state = createGame(settings, frameAt, ratio, radius, null);
+            state = createGame(settings, frameAt, ratio, radius, null, true);
           }
           setPhase({ name: "playing" });
         }
@@ -355,6 +357,12 @@ export function PunchRhythm() {
         onPickSong={pickSong}
         onClearSong={() => setSong({ name: "none" })}
       />
+    );
+  }
+
+  if (phase.name === "result" && phase.game.endReason === "head-lost") {
+    return (
+      <StoppedCard onRetry={start} onBack={() => setPhase({ name: "setup" })} />
     );
   }
 
@@ -424,6 +432,16 @@ export function PunchRhythm() {
           />
         )}
         {game && <PlayField game={game} aspect={aspect} />}
+        {game && headLostMs(game) >= HEAD_WARN_MS && (
+          <div
+            role="alert"
+            className="pointer-events-none absolute inset-x-4 top-4 rounded-lg bg-destructive/90 px-4 py-2 text-center font-semibold text-white"
+          >
+            얼굴이 보이지 않습니다. 카메라 앞으로 오세요 ·{" "}
+            {Math.ceil((HEAD_LOST_MS - headLostMs(game)) / 1000)}초 뒤 운동이
+            끝납니다
+          </div>
+        )}
         {settings.difficulty === "hard" && head && (
           <div
             data-testid="head"

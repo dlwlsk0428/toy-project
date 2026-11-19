@@ -13,6 +13,7 @@ const POSE_MODEL_URL =
 const FIST_POINTS = [0, 5, 9, 13, 17];
 // Pose landmark 0 is the nose, used as the head position.
 const NOSE = 0;
+const MIN_NOSE_VISIBILITY = 0.5;
 
 export type Tracked = { hands: Hand[]; head: Point | null };
 
@@ -21,7 +22,7 @@ export type HandTracker = {
   close: () => void;
 };
 
-/** Tracks both hands, and the head too when `withHead` is set (hard difficulty). */
+/** Tracks both hands, and the head too when `withHead` is set. */
 export async function createHandTracker({
   withHead,
 }: {
@@ -76,7 +77,9 @@ export async function createHandTracker({
         head: null,
       };
       const nose = pose?.detectForVideo(video, now).landmarks[0]?.[NOSE];
-      if (nose) tracked.head = { x: 1 - nose.x, y: nose.y };
+      // Pose models guess hidden landmarks; only trust a nose that is actually visible.
+      if (nose && (nose.visibility ?? 1) >= MIN_NOSE_VISIBILITY)
+        tracked.head = { x: 1 - nose.x, y: nose.y };
       return tracked;
     },
     close() {
