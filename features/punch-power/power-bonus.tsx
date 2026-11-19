@@ -15,7 +15,11 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+import { ImageIcon } from "lucide-react";
+
+import { HandChallenge, type HandSource } from "./hand-challenge";
 import { CHALLENGE_MS, summarize, toG } from "./power";
+import { PunchTarget } from "./punch-target";
 import type { PhoneEvent } from "./relay";
 
 type Stage =
@@ -30,27 +34,116 @@ const POWER_RECORDS_KEY = "punch:power-records";
 
 type PowerRecord = ReturnType<typeof summarize> & { name: string; at: number };
 
+type BonusMode = "hands" | "phone";
+
 /**
- * Bonus game on the computer: connect a phone by QR, then punch as hard as you can for 10 s.
- * The page decides what opens it.
+ * Bonus game on the computer, punching a target for 10 s: with a phone it measures how hard,
+ * without one the webcam counts how many times. The page decides what opens it.
  */
 export function PowerBonus({
   open,
   onOpenChange,
+  createHandSource,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  createHandSource: () => Promise<HandSource>;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-md">
-        {open && <BonusSession />}
+      <DialogContent className="max-h-[95vh] overflow-y-auto sm:max-w-md">
+        {open && <BonusSession createHandSource={createHandSource} />}
       </DialogContent>
     </Dialog>
   );
 }
 
-function BonusSession() {
+function BonusSession({
+  createHandSource,
+}: {
+  createHandSource: () => Promise<HandSource>;
+}) {
+  const [mode, setMode] = useState<BonusMode>("hands");
+  const [image, setImage] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // Release the picked picture when it is replaced or the bonus closes.
+  useEffect(
+    () => () => {
+      if (image) URL.revokeObjectURL(image);
+    },
+    [image],
+  );
+
+  return (
+    <>
+      <DialogHeader>
+        <DialogTitle>보너스: 샌드백 치기</DialogTitle>
+        <DialogDescription>
+          10초 동안 마음껏 치세요. 폰 없이는 몇 번 쳤는지, 폰을 연결하면 얼마나
+          세게 쳤는지 잽니다.
+        </DialogDescription>
+      </DialogHeader>
+
+      <div
+        role="group"
+        aria-label="재는 방법"
+        className="grid grid-cols-2 gap-2"
+      >
+        {(
+          [
+            ["hands", "폰 없이 횟수"],
+            ["phone", "폰으로 세기"],
+          ] as const
+        ).map(([value, label]) => (
+          <Button
+            key={value}
+            variant={mode === value ? "default" : "outline"}
+            aria-pressed={mode === value}
+            onClick={() => setMode(value)}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
+
+      <div className="flex items-center gap-2">
+        <input
+          ref={fileRef}
+          type="file"
+          accept="image/*"
+          className="sr-only"
+          aria-label="때릴 사진 고르기"
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) setImage(URL.createObjectURL(file));
+            event.target.value = "";
+          }}
+        />
+        <Button variant="outline" size="sm" onClick={() => fileRef.current?.click()}>
+          <ImageIcon aria-hidden />
+          {image ? "다른 사진으로" : "때릴 사진 올리기"}
+        </Button>
+        {image && (
+          <Button variant="ghost" size="sm" onClick={() => setImage(null)}>
+            샌드백으로
+          </Button>
+        )}
+        <span className="text-xs text-muted-foreground">
+          사진은 이 컴퓨터 밖으로 나가지 않습니다.
+        </span>
+      </div>
+
+      {mode === "hands" ? (
+        <HandChallenge createHandSource={createHandSource} image={image} />
+      ) : (
+        <PhoneSession image={image} />
+      )}
+    </>
+  );
+}
+
+function PhoneSession({ image }: { image: string | null }) {
   const [room] = useState(() => Math.random().toString(36).slice(2, 8));
   const [phoneUrl, setPhoneUrl] = useState<string | null>(null);
   const [qr, setQr] = useState<string | null>(null);
@@ -133,12 +226,6 @@ function BonusSession() {
 
   return (
     <>
-      <DialogHeader>
-        <DialogTitle>보너스: 펀치 세기</DialogTitle>
-        <DialogDescription>
-          폰을 연결하고 10초 동안 마음껏 치세요. 가장 센 한 방을 기록합니다.
-        </DialogDescription>
-      </DialogHeader>
 
       {stage.name === "waiting" && (
         <div className="flex flex-col items-center gap-3 text-center">
@@ -187,6 +274,11 @@ function BonusSession() {
 
       {stage.name === "playing" && (
         <div className="flex flex-col items-center gap-2 py-2 text-center">
+          <PunchTarget
+            image={image}
+            hits={punches.length}
+            className="w-full max-w-48"
+          />
           <p className="font-mono text-lg tabular-nums">
             {Math.max(0, Math.ceil((stage.endsAt - now) / 1000))}초
           </p>
@@ -195,9 +287,6 @@ function BonusSession() {
             {punches.length
               ? `${toG(punches[punches.length - 1]).toFixed(1)}G`
               : "-"}
-          </p>
-          <p className="text-sm text-muted-foreground">
-            {punches.length}번 쳤습니다
           </p>
         </div>
       )}

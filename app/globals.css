@@ -104,3 +104,21 @@
     @apply font-heading uppercase tracking-wide;
   }
 }
+/* Punch bonus: the target jolts on each hit, and the hit word pops and fades. */
+@keyframes punch-shake {
+  0% { translate: 0 0; }
+  20% { translate: -6% 2%; }
+  45% { translate: 5% -2%; }
+  70% { translate: -2% 1%; }
+  100% { translate: 0 0; }
+}
+
+@keyframes punch-pop {
+  0% { opacity: 0; scale: 0.4; }
+  25% { opacity: 1; scale: 1.25; }
+  100% { opacity: 0; scale: 1; translate: 0 -40%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [class*="animate-[punch-"] { animation: none !important; }
+}
