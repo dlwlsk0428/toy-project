@@ -34,6 +34,8 @@ export type JudgedLight = {
   x: number;
   y: number;
   judgement: Judgement;
+  /** 0–100 for this light. */
+  points: number;
   at: number;
 };
 
@@ -135,15 +137,16 @@ export function stepGame(
 
   const lights: Light[] = [];
   for (const light of state.lights) {
-    const judgement = judge(light, state, now, hands, history, head);
-    if (!judgement) {
+    const result = judge(light, state, now, hands, history, head);
+    if (!result) {
       lights.push(light);
       continue;
     }
+    const { judgement, points } = result;
     counts = { ...counts, [judgement]: counts[judgement] + 1 };
     judged = [
       ...judged,
-      { id: light.id, x: light.x, y: light.y, judgement, at: now },
+      { id: light.id, x: light.x, y: light.y, judgement, points, at: now },
     ];
     nextSpawnAt = now + GAP_AFTER_LIGHT_MS;
   }
@@ -182,7 +185,10 @@ export function stepGame(
   };
 }
 
-/** The judgement for one light at this frame, or null while it is still waiting. */
+/**
+ * The judgement and points for one light at this frame, or null while it is still waiting.
+ * A hit scores by how close it was: 100 on the beat, down to 50 at the edge of Good.
+ */
 function judge(
   light: Light,
   state: GameState,
@@ -190,12 +196,14 @@ function judge(
   hands: Hand[],
   history: Record<string, Sample[]>,
   head: Point | null,
-): Judgement | null {
+): { judgement: Judgement; points: number } | null {
   if (light.kind === "dodge") {
     if (now < light.hitAt) return null;
     // Without a visible head the dodge cannot be confirmed, so it counts as hit.
     const dodged = head !== null && !isInside(head, light, state.aspect, 0);
-    return dodged ? "dodge" : "miss";
+    return dodged
+      ? { judgement: "dodge", points: 100 }
+      : { judgement: "miss", points: 0 };
   }
   const delta = now - light.hitAt;
   const hitter =
@@ -206,8 +214,13 @@ function judge(
         (state.settings.mode === "hobby" ||
           isPunch(history[hand.id], hand, now, state.aspect)),
     );
-  if (hitter) return Math.abs(delta) <= PERFECT_MS ? "perfect" : "good";
-  return delta > GOOD_MS ? "miss" : null;
+  if (hitter) {
+    return {
+      judgement: Math.abs(delta) <= PERFECT_MS ? "perfect" : "good",
+      points: Math.round(100 - (50 * Math.abs(delta)) / GOOD_MS),
+    };
+  }
+  return delta > GOOD_MS ? { judgement: "miss", points: 0 } : null;
 }
 
 function makeLight(
@@ -243,10 +256,10 @@ function makeLight(
   };
 }
 
-export function accuracyOf(counts: Counts): number {
-  const total = counts.perfect + counts.good + counts.miss + counts.dodge;
-  if (total === 0) return 0;
-  return ((counts.perfect + counts.dodge) * 100 + counts.good * 50) / total;
+/** Average points over all judged lights (0–100). */
+export function accuracyOf(judged: JudgedLight[]): number {
+  if (judged.length === 0) return 0;
+  return judged.reduce((sum, j) => sum + j.points, 0) / judged.length;
 }
 
 export function remainingMs(state: GameState): number {

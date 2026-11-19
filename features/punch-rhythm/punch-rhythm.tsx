@@ -651,6 +651,9 @@ function PlayField({ game, aspect }: { game: GameState; aspect: number }) {
             style={{ left: `${j.x * 100}%`, top: `${j.y * 100}%` }}
           >
             {JUDGEMENT_LABELS[j.judgement]}
+            {(j.judgement === "perfect" || j.judgement === "good") && (
+              <span className="ml-1 text-lg tabular-nums">{j.points}</span>
+            )}
           </div>
         ))}
     </div>
@@ -1111,7 +1114,7 @@ function ResultCard({
         <div>
           <p className="text-sm text-muted-foreground">정확도</p>
           <p className="font-heading text-5xl font-semibold tabular-nums">
-            {accuracyOf(counts).toFixed(1)}%
+            {accuracyOf(game.judged).toFixed(1)}%
           </p>
         </div>
         <dl className="grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
@@ -1133,7 +1136,7 @@ function ResultCard({
           makeRecord={(name, at) => ({
             name,
             at,
-            accuracy: accuracyOf(counts),
+            accuracy: accuracyOf(game.judged),
             label,
           })}
           compare={(a, b) => b.accuracy - a.accuracy || a.at - b.at}

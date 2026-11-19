@@ -183,17 +183,44 @@ describe("한 번의 운동", () => {
   });
 });
 
-describe("정확도", () => {
-  test("Perfect는 100%, Good은 50%, Miss는 0%로 쳐서 평균을 낸다", () => {
-    expect(accuracyOf({ perfect: 2, good: 1, miss: 1, dodge: 0 })).toBe(62.5);
+describe("점수와 정확도", () => {
+  test.each([
+    [0, 100],
+    [50, 88],
+    [-100, 75],
+    [150, 63],
+    [200, 50],
+  ])("기준 시점과 %ims 차이로 치면 %i점이다", (delta, points) => {
+    const game = start();
+    const next = stepGame(
+      game,
+      game.lights[0].hitAt + delta,
+      [onLight(game)],
+      center,
+    );
+    expect(next.judged.at(-1)?.points).toBe(points);
   });
 
-  test("회피는 Perfect와 같이 100%로 친다", () => {
-    expect(accuracyOf({ perfect: 1, good: 0, miss: 1, dodge: 2 })).toBe(75);
+  test("Miss는 0점이다", () => {
+    const game = start();
+    const next = stepGame(game, game.lights[0].hitAt + 201, [away()], center);
+    expect(next.judged.at(-1)?.points).toBe(0);
+  });
+
+  test("정확도는 불빛마다 받은 점수의 평균이다", () => {
+    const judged = [100, 88, 50, 0].map((points, id) => ({
+      id,
+      x: 0,
+      y: 0,
+      judgement: "perfect" as const,
+      points,
+      at: 0,
+    }));
+    expect(accuracyOf(judged)).toBe(59.5);
   });
 
   test("불빛이 하나도 없었으면 0%다", () => {
-    expect(accuracyOf({ perfect: 0, good: 0, miss: 0, dodge: 0 })).toBe(0);
+    expect(accuracyOf([])).toBe(0);
   });
 });
 
@@ -307,13 +334,14 @@ describe("어려움 난이도", () => {
     expect(next.counts.miss).toBe(1);
   });
 
-  test("그 순간 머리가 빨간 불빛 밖으로 피했으면 회피다", () => {
+  test("그 순간 머리가 빨간 불빛 밖으로 피했으면 회피(100점)다", () => {
     const game = startHard();
     const next = stepGame(game, game.lights[0].hitAt, [], red, {
       x: 0.8,
       y: 0.3,
     });
     expect(next.judged.at(-1)?.judgement).toBe("dodge");
+    expect(next.judged.at(-1)?.points).toBe(100);
     expect(next.counts.dodge).toBe(1);
   });
 
