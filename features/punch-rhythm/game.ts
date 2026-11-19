@@ -16,7 +16,13 @@ export type Settings = {
 export type Point = { x: number; y: number };
 
 /** A hand position in normalized screen coordinates (0..1), already mirrored. */
-export type Hand = { id: string; x: number; y: number };
+export type Hand = {
+  id: string;
+  x: number;
+  y: number;
+  /** Wrist to middle knuckle in screen heights; grows as the fist comes at the camera. */
+  size?: number;
+};
 
 export type Light = {
   id: number;

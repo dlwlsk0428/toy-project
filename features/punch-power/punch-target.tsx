@@ -5,7 +5,7 @@ import { useId } from "react";
 import { cn } from "@/lib/utils";
 
 /** Hits it takes to crumple the target all the way. */
-export const CRUMPLE_FULL_HITS = 40;
+export const CRUMPLE_FULL_HITS = 30;
 const HIT_WORDS = ["퍽!", "팡!", "쾅!", "빡!", "퍼억!", "뻥!"];
 const OUTLINE_POINTS = 20;
 
