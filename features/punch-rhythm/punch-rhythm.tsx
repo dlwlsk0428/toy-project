@@ -3,6 +3,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import {
   Card,
@@ -22,6 +24,8 @@ import {
   START_TARGET,
   stepGame,
   type CueSpeed,
+  type Difficulty,
+  type Point,
   type GameState,
   type Hand,
   type Judgement,
@@ -58,10 +62,26 @@ const MODE_LABELS: Record<Mode, { label: string; description: string }> = {
   },
 };
 
+const DIFFICULTY_LABELS: Record<
+  Difficulty,
+  { label: string; description: string }
+> = {
+  normal: { label: "보통", description: "파란 불빛만 치면 됩니다." },
+  hard: {
+    label: "어려움",
+    description:
+      "파란 불빛을 치면서, 머리 쪽에 나오는 빨간 불빛은 고개를 움직여 피해야 합니다.",
+  },
+};
+
+const MIN_MINUTES = 1;
+const MAX_MINUTES = 10;
+
 const JUDGEMENT_LABELS: Record<Judgement, string> = {
   perfect: "Perfect",
   good: "Good",
   miss: "Miss",
+  dodge: "회피!",
 };
 
 const FEEDBACK_MS = 600;
@@ -90,6 +110,7 @@ export function PunchRhythm() {
   const [phase, setPhase] = useState<Phase>({ name: "setup" });
   const [game, setGame] = useState<GameState | null>(null);
   const [hands, setHands] = useState<Hand[]>([]);
+  const [head, setHead] = useState<Point | null>(null);
   const [aspect, setAspect] = useState(9 / 16);
   const [pointerSize, setPointerSize] = useState<PointerSize>("medium");
   const [offsets, setOffsets] = useState<Offsets>(NO_OFFSETS);
@@ -160,7 +181,9 @@ export function PunchRhythm() {
         audio: false,
       });
       streamRef.current = stream;
-      trackerRef.current = await createHandTracker();
+      trackerRef.current = await createHandTracker({
+        withHead: settings.difficulty === "hard",
+      });
 
       const video = videoRef.current!;
       video.srcObject = stream;
@@ -176,7 +199,12 @@ export function PunchRhythm() {
         const now = performance.now();
         // The tracker throws on a frame without size, e.g. while the stream is switching.
         const ready = video.readyState >= 2 && video.videoWidth > 0;
-        const raw = (ready && trackerRef.current?.detect(video, now)) || [];
+        const tracked = (ready && trackerRef.current?.detect(video, now)) || {
+          hands: [],
+          head: null,
+        };
+        const raw = tracked.hands;
+        setHead(tracked.head);
         rawHandsRef.current = raw;
         const { offsets: shifts, radius } = pointerRef.current;
         const seen = raw.map((hand) => {
@@ -196,7 +224,7 @@ export function PunchRhythm() {
           state = createGame(settings, now, ratio, radius);
           setPhase({ name: "playing" });
         }
-        state = stepGame(state, now, seen);
+        state = stepGame(state, now, seen, Math.random, tracked.head);
         setGame(state);
         if (state.ended) {
           stopAll();
@@ -242,13 +270,14 @@ export function PunchRhythm() {
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>
           {CUE_SPEED_LABELS[settings.cueSpeed]} ·{" "}
-          {MODE_LABELS[settings.mode].label} 모드
+          {MODE_LABELS[settings.mode].label} 모드 ·{" "}
+          {DIFFICULTY_LABELS[settings.difficulty].label}
         </span>
         <span
           aria-label="남은 시간"
           className="font-mono text-lg text-foreground tabular-nums"
         >
-          {formatTime(game ? remainingMs(game) : 180_000)}
+          {formatTime(game ? remainingMs(game) : settings.minutes * 60_000)}
         </span>
       </div>
       <div
@@ -281,6 +310,13 @@ export function PunchRhythm() {
           />
         )}
         {game && <PlayField game={game} aspect={aspect} />}
+        {settings.difficulty === "hard" && head && (
+          <div
+            data-testid="head"
+            className="pointer-events-none absolute size-4 -translate-1/2 rounded-full border-2 border-red-300 bg-red-500/50"
+            style={{ left: `${head.x * 100}%`, top: `${head.y * 100}%` }}
+          />
+        )}
         <HandMarks
           hands={hands}
           aspect={aspect}
@@ -419,12 +455,21 @@ function PlayField({ game, aspect }: { game: GameState; aspect: number }) {
         <>
           <div
             data-testid="light"
-            className="absolute -translate-1/2 rounded-full bg-blue-500/70 shadow-[0_0_24px] shadow-blue-400"
+            data-kind={light.kind}
+            className={cn(
+              "absolute -translate-1/2 rounded-full shadow-[0_0_24px]",
+              light.kind === "dodge"
+                ? "bg-red-500/60 shadow-red-400"
+                : "bg-blue-500/70 shadow-blue-400",
+            )}
             style={circle(light.x, light.y, light.radius, aspect)}
           />
           <div
             data-testid="cue"
-            className="absolute -translate-1/2 rounded-full border-4 border-blue-200"
+            className={cn(
+              "absolute -translate-1/2 rounded-full border-4",
+              light.kind === "dodge" ? "border-red-200" : "border-blue-200",
+            )}
             style={circle(light.x, light.y, cueRadius, aspect)}
           />
         </>
@@ -460,8 +505,8 @@ function SetupCard({
       <CardHeader>
         <CardTitle>웹 펀치 리듬</CardTitle>
         <CardDescription>
-          예고 원이 파란 불빛에 딱 맞는 순간 손으로 치세요. 한 번의 운동은
-          3분입니다.
+          예고 원이 파란 불빛에 딱 맞는 순간 손으로 치세요. 한 번의 운동은{" "}
+          {settings.minutes}분입니다.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">
@@ -486,6 +531,22 @@ function SetupCard({
           onChange={(mode) => onChange({ ...settings, mode })}
           description={MODE_LABELS[settings.mode].description}
         />
+        <ChoiceGroup
+          label="난이도"
+          options={(Object.keys(DIFFICULTY_LABELS) as Difficulty[]).map(
+            (value) => ({
+              value,
+              label: DIFFICULTY_LABELS[value].label,
+            }),
+          )}
+          value={settings.difficulty}
+          onChange={(difficulty) => onChange({ ...settings, difficulty })}
+          description={DIFFICULTY_LABELS[settings.difficulty].description}
+        />
+        <MinutesField
+          minutes={settings.minutes}
+          onChange={(minutes) => onChange({ ...settings, minutes })}
+        />
         {error && (
           <p
             role="alert"
@@ -502,6 +563,46 @@ function SetupCard({
         <HowTo />
       </CardFooter>
     </Card>
+  );
+}
+
+function MinutesField({
+  minutes,
+  onChange,
+}: {
+  minutes: number;
+  onChange: (minutes: number) => void;
+}) {
+  // Keep the typed text separately so the field can be empty while typing.
+  const [text, setText] = useState(String(minutes));
+  return (
+    <div className="flex flex-col gap-2">
+      <Label htmlFor="minutes">운동 시간 (분)</Label>
+      <Input
+        id="minutes"
+        type="number"
+        inputMode="numeric"
+        min={MIN_MINUTES}
+        max={MAX_MINUTES}
+        className="w-28"
+        value={text}
+        onChange={(event) => {
+          setText(event.target.value);
+          const value = Number(event.target.value);
+          if (
+            Number.isInteger(value) &&
+            value >= MIN_MINUTES &&
+            value <= MAX_MINUTES
+          ) {
+            onChange(value);
+          }
+        }}
+        onBlur={() => setText(String(minutes))}
+      />
+      <p className="text-sm text-muted-foreground">
+        {MIN_MINUTES}분부터 {MAX_MINUTES}분까지 정할 수 있습니다.
+      </p>
+    </div>
   );
 }
 
@@ -566,17 +667,19 @@ function ResultCard({
             {accuracyOf(counts).toFixed(1)}%
           </p>
         </div>
-        <dl className="grid grid-cols-3 gap-2 text-center">
-          {(Object.keys(JUDGEMENT_LABELS) as Judgement[]).map((j) => (
-            <div key={j} className="rounded-lg bg-muted p-3">
-              <dt className="text-sm text-muted-foreground">
-                {JUDGEMENT_LABELS[j]}
-              </dt>
-              <dd className="text-2xl font-semibold tabular-nums">
-                {counts[j]}
-              </dd>
-            </div>
-          ))}
+        <dl className="grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
+          {(Object.keys(JUDGEMENT_LABELS) as Judgement[])
+            .filter((j) => j !== "dodge" || game.settings.difficulty === "hard")
+            .map((j) => (
+              <div key={j} className="rounded-lg bg-muted p-3">
+                <dt className="text-sm text-muted-foreground">
+                  {JUDGEMENT_LABELS[j]}
+                </dt>
+                <dd className="text-2xl font-semibold tabular-nums">
+                  {counts[j]}
+                </dd>
+              </div>
+            ))}
         </dl>
       </CardContent>
       <CardFooter className="gap-2">

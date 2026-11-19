@@ -12,7 +12,8 @@ export class CameraImageError extends Error {
 
 export function isTooDark(rgba: Uint8ClampedArray): boolean {
   let sum = 0;
-  for (let i = 0; i < rgba.length; i += 4) sum += (rgba[i] + rgba[i + 1] + rgba[i + 2]) / 3;
+  for (let i = 0; i < rgba.length; i += 4)
+    sum += (rgba[i] + rgba[i + 1] + rgba[i + 2]) / 3;
   return sum / (rgba.length / 4) < DARK_BRIGHTNESS;
 }
 
@@ -20,7 +21,9 @@ export function isTooDark(rgba: Uint8ClampedArray): boolean {
  * Waits until the playing video shows a real image.
  * Rejects when no frame arrives in time, or the image is black (lens covered, camera off).
  */
-export async function waitForCameraImage(video: HTMLVideoElement): Promise<void> {
+export async function waitForCameraImage(
+  video: HTMLVideoElement,
+): Promise<void> {
   const deadline = performance.now() + FRAME_TIMEOUT_MS;
   while (!(video.readyState >= 2 && video.videoWidth > 0)) {
     if (performance.now() > deadline) throw new CameraImageError("no-frames");
@@ -35,7 +38,10 @@ export async function waitForCameraImage(video: HTMLVideoElement): Promise<void>
   if (!context) return;
   for (let attempt = 0; attempt < 10; attempt++) {
     context.drawImage(video, 0, 0, canvas.width, canvas.height);
-    if (!isTooDark(context.getImageData(0, 0, canvas.width, canvas.height).data)) return;
+    if (
+      !isTooDark(context.getImageData(0, 0, canvas.width, canvas.height).data)
+    )
+      return;
     await new Promise((resolve) => setTimeout(resolve, 200));
   }
   throw new CameraImageError("dark");

@@ -33,8 +33,8 @@ const SLIDES: Slide[] = [
   },
   {
     icon: SlidersHorizontalIcon,
-    title: "속도와 모드 고르기",
-    body: "예고 속도는 불빛이 맞을 때까지 걸리는 시간입니다. 취미 모드는 손을 대기만 해도, 선수 모드는 빠르게 뻗어야 인정됩니다.",
+    title: "속도·모드·난이도·시간 고르기",
+    body: "예고 속도는 불빛이 맞을 때까지 걸리는 시간입니다. 취미 모드는 손을 대기만 해도, 선수 모드는 빠르게 뻗어야 인정됩니다. 어려움 난이도에서는 피해야 하는 빨간 불빛이 섞여 나옵니다. 운동 시간은 분 단위로 정합니다(기본 3분).",
   },
   {
     icon: HandIcon,
@@ -49,12 +49,12 @@ const SLIDES: Slide[] = [
   {
     icon: ZapIcon,
     title: "원이 맞는 순간 치기",
-    body: "파란 불빛 바깥의 원이 줄어들어 불빛과 딱 맞는 순간 치세요. 0.1초 안이면 Perfect, 0.2초 안이면 Good, 놓치면 Miss입니다.",
+    body: "파란 불빛 바깥의 원이 줄어들어 불빛과 딱 맞는 순간 치세요. 0.1초 안이면 Perfect, 0.2초 안이면 Good, 놓치면 Miss입니다. 빨간 불빛은 머리 쪽에 나오니, 원이 맞는 순간 고개를 옆으로 움직여 피하세요.",
   },
   {
     icon: TrophyIcon,
     title: "정확도 확인하기",
-    body: "3분이 지나면 정확도와 판정별 개수를 보여 줍니다. 같은 설정으로 다시 하며 기록을 올려 보세요.",
+    body: "정한 시간이 지나면 정확도와 판정별 개수를 보여 줍니다. 회피는 Perfect와 같게 칩니다. 같은 설정으로 다시 하며 기록을 올려 보세요.",
   },
 ];
 
@@ -73,7 +73,9 @@ export function HowTo() {
         if (next) setIndex(0);
       }}
     >
-      <DialogTrigger render={<Button size="lg" variant="outline" />}>하는 방법</DialogTrigger>
+      <DialogTrigger render={<Button size="lg" variant="outline" />}>
+        하는 방법
+      </DialogTrigger>
       <DialogContent className="sm:max-w-md">
         <div className="flex aspect-[4/3] flex-col items-center justify-center gap-3 rounded-xl bg-primary/10 text-primary">
           <Icon className="size-16" aria-hidden />
@@ -91,7 +93,7 @@ export function HowTo() {
               key={s.title}
               className={cn(
                 "size-2 rounded-full",
-                i === index ? "bg-primary" : "bg-muted-foreground/30"
+                i === index ? "bg-primary" : "bg-muted-foreground/30",
               )}
             />
           ))}
@@ -104,7 +106,9 @@ export function HowTo() {
           >
             이전
           </Button>
-          <Button onClick={() => (isLast ? setOpen(false) : setIndex(index + 1))}>
+          <Button
+            onClick={() => (isLast ? setOpen(false) : setIndex(index + 1))}
+          >
             {isLast ? "시작하러 가기" : "다음"}
           </Button>
         </DialogFooter>

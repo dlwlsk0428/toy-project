@@ -1,14 +1,25 @@
 export type CueSpeed = "slow" | "normal" | "fast";
 export type Mode = "hobby" | "pro";
-export type Judgement = "perfect" | "good" | "miss";
+export type Difficulty = "normal" | "hard";
+export type Judgement = "perfect" | "good" | "miss" | "dodge";
 
-export type Settings = { cueSpeed: CueSpeed; mode: Mode };
+export type Settings = {
+  cueSpeed: CueSpeed;
+  mode: Mode;
+  difficulty: Difficulty;
+  minutes: number;
+};
+
+/** A point in normalized screen coordinates (0..1), already mirrored. */
+export type Point = { x: number; y: number };
 
 /** A hand position in normalized screen coordinates (0..1), already mirrored. */
 export type Hand = { id: string; x: number; y: number };
 
 export type Light = {
   id: number;
+  /** "hit" lights are punched, "dodge" lights must be avoided with the head. */
+  kind: "hit" | "dodge";
   x: number;
   y: number;
   radius: number;
@@ -45,14 +56,26 @@ export type GameState = {
   ended: boolean;
 };
 
-export const DEFAULT_SETTINGS: Settings = { cueSpeed: "normal", mode: "hobby" };
-export const CUE_MS: Record<CueSpeed, number> = { slow: 1500, normal: 1000, fast: 700 };
-export const SESSION_MS = 180_000;
+export const DEFAULT_SETTINGS: Settings = {
+  cueSpeed: "normal",
+  mode: "hobby",
+  difficulty: "normal",
+  minutes: 3,
+};
+export const CUE_MS: Record<CueSpeed, number> = {
+  slow: 1500,
+  normal: 1000,
+  fast: 700,
+};
 
 const PERFECT_MS = 100;
 const GOOD_MS = 200;
 const LIGHT_RADIUS = 0.08;
 const GAP_AFTER_LIGHT_MS = 400;
+// Hard difficulty: share of lights that are red, their size, and where they go without a head.
+const DODGE_CHANCE = 0.3;
+const DODGE_RADIUS = 0.12;
+const DEFAULT_HEAD: Point = { x: 0.5, y: 0.3 };
 // Pro mode: the hand must have travelled this far (in screen widths) within PUNCH_WINDOW_MS.
 const PUNCH_WINDOW_MS = 200;
 const PUNCH_DISTANCE = 0.15;
@@ -63,7 +86,7 @@ export function createGame(
   settings: Settings,
   now: number,
   aspect = 1,
-  pointerRadius = 0
+  pointerRadius = 0,
 ): GameState {
   return {
     settings,
@@ -72,7 +95,7 @@ export function createGame(
     light: null,
     nextSpawnAt: now,
     nextId: 1,
-    counts: { perfect: 0, good: 0, miss: 0 },
+    counts: { perfect: 0, good: 0, miss: 0, dodge: 0 },
     judged: [],
     history: {},
     aspect,
@@ -85,17 +108,31 @@ export function stepGame(
   state: GameState,
   now: number,
   hands: Hand[],
-  random: () => number = Math.random
+  random: () => number = Math.random,
+  head: Point | null = null,
 ): GameState {
   if (state.ended) return state;
-  if (now - state.startedAt >= SESSION_MS) {
+  if (now - state.startedAt >= sessionMs(state.settings)) {
     return { ...state, now, light: null, ended: true };
   }
 
   const history = recordHands(state.history, hands, now);
   let { light, nextSpawnAt, nextId, counts, judged } = state;
 
-  if (light) {
+  if (light?.kind === "dodge") {
+    if (now >= light.hitAt) {
+      // Without a visible head the dodge cannot be confirmed, so it counts as hit.
+      const dodged = head !== null && !isInside(head, light, state.aspect, 0);
+      const judgement: Judgement = dodged ? "dodge" : "miss";
+      counts = { ...counts, [judgement]: counts[judgement] + 1 };
+      judged = [
+        ...judged,
+        { id: light.id, x: light.x, y: light.y, judgement, at: now },
+      ];
+      light = null;
+      nextSpawnAt = now + GAP_AFTER_LIGHT_MS;
+    }
+  } else if (light) {
     const delta = now - light.hitAt;
     const hitter =
       Math.abs(delta) <= GOOD_MS &&
@@ -103,7 +140,7 @@ export function stepGame(
         (hand) =>
           isInside(hand, light!, state.aspect, state.pointerRadius) &&
           (state.settings.mode === "hobby" ||
-            isPunch(history[hand.id], hand, now, state.aspect))
+            isPunch(history[hand.id], hand, now, state.aspect)),
       );
 
     let judgement: Judgement | null = null;
@@ -112,21 +149,40 @@ export function stepGame(
 
     if (judgement) {
       counts = { ...counts, [judgement]: counts[judgement] + 1 };
-      judged = [...judged, { id: light.id, x: light.x, y: light.y, judgement, at: now }];
+      judged = [
+        ...judged,
+        { id: light.id, x: light.x, y: light.y, judgement, at: now },
+      ];
       light = null;
       nextSpawnAt = now + GAP_AFTER_LIGHT_MS;
     }
   }
 
   if (!light && now >= nextSpawnAt) {
-    light = {
+    const timing = {
       id: nextId,
-      x: AREA.minX + random() * (AREA.maxX - AREA.minX),
-      y: AREA.minY + random() * (AREA.maxY - AREA.minY),
-      radius: LIGHT_RADIUS,
       spawnAt: now,
       hitAt: now + CUE_MS[state.settings.cueSpeed],
     };
+    // A red light appears where the head is now, so the player has to move it away.
+    if (state.settings.difficulty === "hard" && random() < DODGE_CHANCE) {
+      const at = head ?? DEFAULT_HEAD;
+      light = {
+        ...timing,
+        kind: "dodge",
+        x: at.x,
+        y: at.y,
+        radius: DODGE_RADIUS,
+      };
+    } else {
+      light = {
+        ...timing,
+        kind: "hit",
+        x: AREA.minX + random() * (AREA.maxX - AREA.minX),
+        y: AREA.minY + random() * (AREA.maxY - AREA.minY),
+        radius: LIGHT_RADIUS,
+      };
+    }
     nextId += 1;
   }
 
@@ -134,18 +190,28 @@ export function stepGame(
 }
 
 export function accuracyOf(counts: Counts): number {
-  const total = counts.perfect + counts.good + counts.miss;
+  const total = counts.perfect + counts.good + counts.miss + counts.dodge;
   if (total === 0) return 0;
-  return (counts.perfect * 100 + counts.good * 50) / total;
+  return ((counts.perfect + counts.dodge) * 100 + counts.good * 50) / total;
 }
 
 export function remainingMs(state: GameState): number {
-  return Math.max(0, SESSION_MS - (state.now - state.startedAt));
+  return Math.max(0, sessionMs(state.settings) - (state.now - state.startedAt));
 }
 
-function isInside(hand: Hand, target: Target, aspect: number, pointerRadius: number): boolean {
+function sessionMs(settings: Settings): number {
+  return settings.minutes * 60_000;
+}
+
+function isInside(
+  hand: Point,
+  target: Target,
+  aspect: number,
+  pointerRadius: number,
+): boolean {
   return (
-    Math.hypot(hand.x - target.x, (hand.y - target.y) * aspect) <= target.radius + pointerRadius
+    Math.hypot(hand.x - target.x, (hand.y - target.y) * aspect) <=
+    target.radius + pointerRadius
   );
 }
 
@@ -153,24 +219,26 @@ function isPunch(
   samples: Sample[] | undefined,
   hand: Hand,
   now: number,
-  aspect: number
+  aspect: number,
 ): boolean {
   return (samples ?? []).some(
     (s) =>
       s.t < now &&
       now - s.t <= PUNCH_WINDOW_MS &&
-      Math.hypot(hand.x - s.x, (hand.y - s.y) * aspect) >= PUNCH_DISTANCE
+      Math.hypot(hand.x - s.x, (hand.y - s.y) * aspect) >= PUNCH_DISTANCE,
   );
 }
 
 function recordHands(
   history: Record<string, Sample[]>,
   hands: Hand[],
-  now: number
+  now: number,
 ): Record<string, Sample[]> {
   const next: Record<string, Sample[]> = {};
   for (const hand of hands) {
-    const kept = (history[hand.id] ?? []).filter((s) => now - s.t <= PUNCH_WINDOW_MS);
+    const kept = (history[hand.id] ?? []).filter(
+      (s) => now - s.t <= PUNCH_WINDOW_MS,
+    );
     next[hand.id] = [...kept, { x: hand.x, y: hand.y, t: now }];
   }
   return next;
@@ -185,7 +253,7 @@ export function isHandOnTarget(
   hands: Hand[],
   target: Target,
   aspect: number,
-  pointerRadius = 0
+  pointerRadius = 0,
 ): boolean {
   return hands.some((hand) => isInside(hand, target, aspect, pointerRadius));
 }
