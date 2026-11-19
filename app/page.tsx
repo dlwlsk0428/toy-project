@@ -1,4 +1,5 @@
 import { BrandLogo } from "@/components/brand-logo";
+import { PowerBonus } from "@/features/punch-power";
 import { PunchRhythm } from "@/features/punch-rhythm";
 
 /** 링 위 천장 조명: 위에서 떨어지는 빛줄기, 바닥에 고이는 빛, 뒤쪽 링 로프. */
@@ -30,7 +31,7 @@ export default function Home() {
       <RingLights />
       <div className="flex w-full max-w-4xl flex-col items-center gap-10">
         <BrandLogo className="text-7xl drop-shadow-[0_0_28px_oklch(0.95_0.04_85/0.25)] sm:text-8xl" />
-        <PunchRhythm />
+        <PunchRhythm setupExtra={<PowerBonus />} />
       </div>
     </main>
   );
