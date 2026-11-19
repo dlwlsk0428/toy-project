@@ -40,6 +40,8 @@ export type GameState = {
   history: Record<string, Sample[]>;
   /** Screen height / width, so distances are measured in screen widths on both axes. */
   aspect: number;
+  /** Radius of the hand pointer in screen widths; it widens what counts as touching. */
+  pointerRadius: number;
   ended: boolean;
 };
 
@@ -57,7 +59,12 @@ const PUNCH_DISTANCE = 0.15;
 // Area reachable both seated and standing: center to upper part of the screen.
 const AREA = { minX: 0.2, maxX: 0.8, minY: 0.15, maxY: 0.6 };
 
-export function createGame(settings: Settings, now: number, aspect = 1): GameState {
+export function createGame(
+  settings: Settings,
+  now: number,
+  aspect = 1,
+  pointerRadius = 0
+): GameState {
   return {
     settings,
     startedAt: now,
@@ -69,6 +76,7 @@ export function createGame(settings: Settings, now: number, aspect = 1): GameSta
     judged: [],
     history: {},
     aspect,
+    pointerRadius,
     ended: false,
   };
 }
@@ -93,7 +101,7 @@ export function stepGame(
       Math.abs(delta) <= GOOD_MS &&
       hands.find(
         (hand) =>
-          isInside(hand, light!, state.aspect) &&
+          isInside(hand, light!, state.aspect, state.pointerRadius) &&
           (state.settings.mode === "hobby" ||
             isPunch(history[hand.id], hand, now, state.aspect))
       );
@@ -135,8 +143,10 @@ export function remainingMs(state: GameState): number {
   return Math.max(0, SESSION_MS - (state.now - state.startedAt));
 }
 
-function isInside(hand: Hand, target: Target, aspect: number): boolean {
-  return Math.hypot(hand.x - target.x, (hand.y - target.y) * aspect) <= target.radius;
+function isInside(hand: Hand, target: Target, aspect: number, pointerRadius: number): boolean {
+  return (
+    Math.hypot(hand.x - target.x, (hand.y - target.y) * aspect) <= target.radius + pointerRadius
+  );
 }
 
 function isPunch(
@@ -171,6 +181,11 @@ export type Target = { x: number; y: number; radius: number };
 /** The on-screen "start" mark the player punches to begin. */
 export const START_TARGET: Target = { x: 0.5, y: 0.4, radius: 0.12 };
 
-export function isHandOnTarget(hands: Hand[], target: Target, aspect: number): boolean {
-  return hands.some((hand) => isInside(hand, target, aspect));
+export function isHandOnTarget(
+  hands: Hand[],
+  target: Target,
+  aspect: number,
+  pointerRadius = 0
+): boolean {
+  return hands.some((hand) => isInside(hand, target, aspect, pointerRadius));
 }

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 import {
   Card,
   CardContent,
@@ -57,12 +58,26 @@ const JUDGEMENT_LABELS: Record<Judgement, string> = {
 
 const FEEDBACK_MS = 600;
 
+type PointerSize = "small" | "medium" | "large";
+// Pointer radius in screen widths. A bigger pointer touches lights from further away.
+const POINTER_RADIUS: Record<PointerSize, number> = { small: 0.015, medium: 0.03, large: 0.06 };
+const POINTER_SIZE_LABELS: Record<PointerSize, string> = {
+  small: "작게",
+  medium: "보통",
+  large: "크게",
+};
+
+type Offset = { x: number; y: number };
+const NO_OFFSET: Offset = { x: 0, y: 0 };
+
 export function PunchRhythm() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [phase, setPhase] = useState<Phase>({ name: "setup" });
   const [game, setGame] = useState<GameState | null>(null);
   const [hands, setHands] = useState<Hand[]>([]);
   const [aspect, setAspect] = useState(9 / 16);
+  const [pointerSize, setPointerSize] = useState<PointerSize>("medium");
+  const [offset, setOffset] = useState<Offset>(NO_OFFSET);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -70,6 +85,33 @@ export function PunchRhythm() {
   const frameRef = useRef<number | null>(null);
   const startingRef = useRef(false);
   const startRequestedRef = useRef(false);
+  const fieldRef = useRef<HTMLDivElement>(null);
+  // The running loop reads the latest pointer settings through refs.
+  const pointerRef = useRef({ offset: NO_OFFSET, radius: POINTER_RADIUS.medium });
+  const rawHandsRef = useRef<Hand[]>([]);
+  const draggingRef = useRef<string | null>(null);
+
+  const changeOffset = (next: Offset) => {
+    pointerRef.current.offset = next;
+    setOffset(next);
+  };
+  const changePointerSize = (size: PointerSize) => {
+    pointerRef.current.radius = POINTER_RADIUS[size];
+    setPointerSize(size);
+  };
+
+  // Dragging a pointer moves it onto the real fist: the offset is where the mouse is
+  // relative to where the hand was detected.
+  const dragPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    const id = draggingRef.current;
+    const rect = fieldRef.current?.getBoundingClientRect();
+    const raw = rawHandsRef.current.find((hand) => hand.id === id);
+    if (!id || !rect || !raw) return;
+    changeOffset({
+      x: (event.clientX - rect.left) / rect.width - raw.x,
+      y: (event.clientY - rect.top) / rect.height - raw.y,
+    });
+  };
 
   const stopAll = useCallback(() => {
     if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
@@ -111,14 +153,19 @@ export function PunchRhythm() {
         const now = performance.now();
         // The tracker throws on a frame without size, e.g. while the stream is switching.
         const ready = video.readyState >= 2 && video.videoWidth > 0;
-        const seen = (ready && trackerRef.current?.detect(video, now)) || [];
+        const raw = (ready && trackerRef.current?.detect(video, now)) || [];
+        rawHandsRef.current = raw;
+        const { offset: shift, radius } = pointerRef.current;
+        const seen = raw.map((hand) => ({ ...hand, x: hand.x + shift.x, y: hand.y + shift.y }));
         setHands(seen);
         if (!state) {
-          if (!startRequestedRef.current && !isHandOnTarget(seen, START_TARGET, ratio)) {
+          const punched =
+            draggingRef.current === null && isHandOnTarget(seen, START_TARGET, ratio, radius);
+          if (!startRequestedRef.current && !punched) {
             frameRef.current = requestAnimationFrame(loop);
             return;
           }
-          state = createGame(settings, now, ratio);
+          state = createGame(settings, now, ratio, radius);
           setPhase({ name: "playing" });
         }
         state = stepGame(state, now, seen);
@@ -172,7 +219,11 @@ export function PunchRhythm() {
         </span>
       </div>
       <div
-        className="relative mx-auto w-full overflow-hidden rounded-xl bg-black"
+        ref={fieldRef}
+        onPointerMove={dragPointer}
+        onPointerUp={() => (draggingRef.current = null)}
+        onPointerLeave={() => (draggingRef.current = null)}
+        className="relative mx-auto w-full touch-none overflow-hidden rounded-xl bg-black"
         // Keep the whole play area inside the window, whatever the camera's ratio.
         style={{ aspectRatio: `1 / ${aspect}`, maxWidth: `calc(75vh / ${aspect})` }}
       >
@@ -191,8 +242,34 @@ export function PunchRhythm() {
           <StartMark aspect={aspect} onClick={() => (startRequestedRef.current = true)} />
         )}
         {game && <PlayField game={game} aspect={aspect} />}
-        <HandMarks hands={hands} />
+        <HandMarks
+          hands={hands}
+          aspect={aspect}
+          radius={POINTER_RADIUS[pointerSize]}
+          onGrab={phase.name === "ready" ? (id) => (draggingRef.current = id) : undefined}
+        />
       </div>
+      {phase.name === "ready" && (
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
+          <ChoiceGroup
+            label="포인터 크기"
+            options={(Object.keys(POINTER_SIZE_LABELS) as PointerSize[]).map((value) => ({
+              value,
+              label: POINTER_SIZE_LABELS[value],
+            }))}
+            value={pointerSize}
+            onChange={changePointerSize}
+            description="손을 든 채로 흰 포인터를 마우스로 끌어 실제 주먹 위치에 맞출 수 있습니다."
+          />
+          <Button
+            variant="outline"
+            onClick={() => changeOffset(NO_OFFSET)}
+            disabled={offset.x === 0 && offset.y === 0}
+          >
+            위치 초기화
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -226,15 +303,29 @@ function StartMark({ aspect, onClick }: { aspect: number; onClick: () => void })
   );
 }
 
-function HandMarks({ hands }: { hands: Hand[] }) {
+function HandMarks({
+  hands,
+  aspect,
+  radius,
+  onGrab,
+}: {
+  hands: Hand[];
+  aspect: number;
+  radius: number;
+  onGrab?: (id: string) => void;
+}) {
   return (
     <div className="pointer-events-none absolute inset-0">
       {hands.map((hand, i) => (
         <div
           key={`${hand.id}-${i}`}
           data-testid="hand"
-          className="absolute size-6 -translate-1/2 rounded-full border-2 border-white bg-white/40"
-          style={{ left: `${hand.x * 100}%`, top: `${hand.y * 100}%` }}
+          onPointerDown={onGrab && (() => onGrab(hand.id))}
+          className={cn(
+            "absolute min-h-6 min-w-6 -translate-1/2 rounded-full border-2 border-white bg-white/40",
+            onGrab && "pointer-events-auto cursor-grab"
+          )}
+          style={circle(hand.x, hand.y, radius, aspect)}
         />
       ))}
     </div>

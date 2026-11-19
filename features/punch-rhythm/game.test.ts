@@ -170,3 +170,21 @@ describe("시작 표시", () => {
     expect(isHandOnTarget([hand], START_TARGET, 0.5)).toBe(true);
   });
 });
+
+describe("포인터 크기", () => {
+  test("포인터가 크면 불빛 가장자리 밖이라도 포인터가 닿으면 친 것으로 본다", () => {
+    const small = stepGame(createGame(DEFAULT_SETTINGS, 0, 1, 0), 0, [], center);
+    const big = stepGame(createGame(DEFAULT_SETTINGS, 0, 1, 0.05), 0, [], center);
+    const { x, y, radius, hitAt } = small.light!;
+    const hand = { id: "Right", x: x + radius + 0.03, y };
+    expect(stepGame(small, hitAt, [hand], center).judged).toHaveLength(0);
+    expect(stepGame(big, hitAt, [hand], center).judged.at(-1)?.judgement).toBe("perfect");
+  });
+
+  test("시작 표시도 포인터 크기만큼 넓게 닿는다", () => {
+    const { x, y, radius } = START_TARGET;
+    const hand = { id: "Left", x: x + radius + 0.03, y };
+    expect(isHandOnTarget([hand], START_TARGET, 1, 0)).toBe(false);
+    expect(isHandOnTarget([hand], START_TARGET, 1, 0.05)).toBe(true);
+  });
+});
