@@ -26,7 +26,7 @@ function start(settings: Partial<Settings> = {}): GameState {
 }
 
 function onLight(state: GameState, id = "Right"): Hand {
-  return { id, x: state.light!.x, y: state.light!.y };
+  return { id, x: state.lights[0].x, y: state.lights[0].y };
 }
 
 function away(id = "Right"): Hand {
@@ -51,8 +51,8 @@ describe("설정", () => {
     "예고 속도 %s의 예고는 %ims 뒤 기준 시점에 맞는다",
     (cueSpeed, ms) => {
       const game = start({ cueSpeed });
-      expect(game.light).not.toBeNull();
-      expect(game.light!.hitAt - game.light!.spawnAt).toBe(ms);
+      expect(game.lights.length).toBeGreaterThan(0);
+      expect(game.lights[0].hitAt - game.lights[0].spawnAt).toBe(ms);
     },
   );
 });
@@ -69,7 +69,7 @@ describe("취미 모드 판정", () => {
     "기준 시점과 %ims 차이로 불빛에 손이 들어오면 %s",
     (delta, expected) => {
       const game = start();
-      const hitAt = game.light!.hitAt;
+      const hitAt = game.lights[0].hitAt;
       const next = stepGame(game, hitAt + delta, [onLight(game)], center);
       expect(next.judged.at(-1)?.judgement).toBe(expected);
       expect(next.counts[expected]).toBe(1);
@@ -80,42 +80,42 @@ describe("취미 모드 판정", () => {
     const game = start();
     const next = stepGame(
       game,
-      game.light!.hitAt - 300,
+      game.lights[0].hitAt - 300,
       [onLight(game)],
       center,
     );
     expect(next.judged).toHaveLength(0);
-    expect(next.light?.id).toBe(game.light!.id);
+    expect(next.lights[0]?.id).toBe(game.lights[0].id);
   });
 
   test("불빛 밖의 손은 판정하지 않는다", () => {
     const game = start();
-    const next = stepGame(game, game.light!.hitAt, [away()], center);
+    const next = stepGame(game, game.lights[0].hitAt, [away()], center);
     expect(next.judged).toHaveLength(0);
   });
 
   test("판정 범위가 끝날 때까지 치지 못하면 Miss가 되고 불빛이 사라진다", () => {
     const game = start();
-    const next = stepGame(game, game.light!.hitAt + 201, [away()], center);
+    const next = stepGame(game, game.lights[0].hitAt + 201, [away()], center);
     expect(next.judged.at(-1)?.judgement).toBe("miss");
     expect(next.counts.miss).toBe(1);
-    expect(next.light).toBeNull();
+    expect(next.lights).toHaveLength(0);
   });
 
   test("친 불빛은 사라지고 잠시 뒤 다음 불빛이 나온다", () => {
     const game = start();
-    const hit = stepGame(game, game.light!.hitAt, [onLight(game)], center);
-    expect(hit.light).toBeNull();
-    const later = stepGame(hit, game.light!.hitAt + 1000, [], center);
-    expect(later.light).not.toBeNull();
-    expect(later.light!.id).not.toBe(game.light!.id);
+    const hit = stepGame(game, game.lights[0].hitAt, [onLight(game)], center);
+    expect(hit.lights).toHaveLength(0);
+    const later = stepGame(hit, game.lights[0].hitAt + 1000, [], center);
+    expect(later.lights.length).toBeGreaterThan(0);
+    expect(later.lights[0].id).not.toBe(game.lights[0].id);
   });
 });
 
 describe("선수 모드 판정", () => {
   test("손이 천천히 불빛에 들어오면 친 것으로 보지 않는다", () => {
     const game = start({ mode: "pro" });
-    const { x, y, hitAt } = game.light!;
+    const { x, y, hitAt } = game.lights[0];
     // Hand already rests near the light, then drifts in by a tiny amount.
     let state = stepGame(
       game,
@@ -135,7 +135,7 @@ describe("선수 모드 판정", () => {
 
   test("손을 빠르게 뻗어 불빛에 들어오면 판정한다", () => {
     const game = start({ mode: "pro" });
-    const { x, y, hitAt } = game.light!;
+    const { x, y, hitAt } = game.lights[0];
     let state = stepGame(
       game,
       hitAt - 150,
@@ -148,7 +148,7 @@ describe("선수 모드 판정", () => {
 
   test("같은 느린 동작을 취미 모드에서 하면 친 것으로 인정한다", () => {
     const game = start({ mode: "hobby" });
-    const { x, y, hitAt } = game.light!;
+    const { x, y, hitAt } = game.lights[0];
     let state = stepGame(
       game,
       hitAt - 150,
@@ -172,7 +172,7 @@ describe("한 번의 운동", () => {
     expect(remainingMs(game)).toBe(180_000);
     const ended = stepGame(game, 180_000, [], center);
     expect(ended.ended).toBe(true);
-    expect(ended.light).toBeNull();
+    expect(ended.lights).toHaveLength(0);
     expect(remainingMs(ended)).toBe(0);
   });
 
@@ -234,7 +234,7 @@ describe("포인터 크기", () => {
       [],
       center,
     );
-    const { x, y, radius, hitAt } = small.light!;
+    const { x, y, radius, hitAt } = small.lights[0];
     const hand = { id: "Right", x: x + radius + 0.03, y };
     expect(stepGame(small, hitAt, [hand], center).judged).toHaveLength(0);
     expect(stepGame(big, hitAt, [hand], center).judged.at(-1)?.judgement).toBe(
@@ -276,12 +276,16 @@ describe("어려움 난이도", () => {
 
   test("보통 난이도에서는 빨간 불빛이 나오지 않는다", () => {
     const game = stepGame(createGame(DEFAULT_SETTINGS, 0), 0, [], red, head);
-    expect(game.light?.kind).toBe("hit");
+    expect(game.lights[0]?.kind).toBe("hit");
   });
 
   test("어려움에서는 빨간 불빛이 머리 위치에 나온다", () => {
     const game = startHard();
-    expect(game.light).toMatchObject({ kind: "dodge", x: head.x, y: head.y });
+    expect(game.lights[0]).toMatchObject({
+      kind: "dodge",
+      x: head.x,
+      y: head.y,
+    });
   });
 
   test("어려움에서도 파란 불빛이 나온다", () => {
@@ -292,36 +296,84 @@ describe("어려움 난이도", () => {
       () => 0.9,
       head,
     );
-    expect(game.light?.kind).toBe("hit");
+    expect(game.lights[0]?.kind).toBe("hit");
   });
 
   test("예고 원이 맞는 순간 머리가 빨간 불빛 안에 있으면 Miss다", () => {
     const game = startHard();
-    const next = stepGame(game, game.light!.hitAt, [], red, head);
+    const next = stepGame(game, game.lights[0].hitAt, [], red, head);
     expect(next.judged.at(-1)?.judgement).toBe("miss");
     expect(next.counts.miss).toBe(1);
   });
 
   test("그 순간 머리가 빨간 불빛 밖으로 피했으면 회피다", () => {
     const game = startHard();
-    const next = stepGame(game, game.light!.hitAt, [], red, { x: 0.8, y: 0.3 });
+    const next = stepGame(game, game.lights[0].hitAt, [], red, {
+      x: 0.8,
+      y: 0.3,
+    });
     expect(next.judged.at(-1)?.judgement).toBe("dodge");
     expect(next.counts.dodge).toBe(1);
   });
 
   test("머리가 안 보이는 채로 순간이 지나면 회피로 보지 않고 Miss다", () => {
     const game = startHard();
-    const next = stepGame(game, game.light!.hitAt, [], red, null);
+    const next = stepGame(game, game.lights[0].hitAt, [], red, null);
     expect(next.judged.at(-1)?.judgement).toBe("miss");
   });
 
   test("빨간 불빛은 손으로 쳐도 판정하지 않는다", () => {
     const game = startHard();
     const hand = { id: "Right", x: head.x, y: head.y };
-    const next = stepGame(game, game.light!.hitAt - 50, [hand], red, {
+    const next = stepGame(game, game.lights[0].hitAt - 50, [hand], red, {
       x: 0.8,
       y: 0.3,
     });
     expect(next.judged).toHaveLength(0);
+  });
+});
+
+describe("노래 모드", () => {
+  const song = { beats: [2000, 2500, 3000], durationMs: 5000 };
+
+  function startSong(): GameState {
+    return stepGame(createGame(DEFAULT_SETTINGS, 0, 1, 0, song), 0, [], center);
+  }
+
+  test("시작하자마자는 불빛이 없고, 박자 시각보다 예고 시간만큼 먼저 나타난다", () => {
+    const game = startSong();
+    expect(game.lights).toHaveLength(0);
+    const next = stepGame(game, 1000, [], center);
+    expect(next.lights.map((l) => l.hitAt)).toEqual([2000]);
+    expect(next.lights[0].spawnAt).toBe(1000);
+  });
+
+  test("박자가 촘촘하면 불빛 여러 개가 함께 떠 있다", () => {
+    let state = startSong();
+    state = stepGame(state, 1000, [], center);
+    state = stepGame(state, 1500, [], center);
+    expect(state.lights.map((l) => l.hitAt)).toEqual([2000, 2500]);
+  });
+
+  test("불빛 하나를 쳐도 다른 불빛은 남아 있다", () => {
+    let state = startSong();
+    state = stepGame(state, 1000, [], center);
+    state = stepGame(state, 1500, [], center);
+    const first = state.lights[0];
+    state = stepGame(
+      state,
+      2000,
+      [{ id: "Right", x: first.x, y: first.y }],
+      center,
+    );
+    expect(state.judged.at(-1)?.judgement).toBe("perfect");
+    // The 3000 ms beat also appears now, one cue (1000 ms) before it.
+    expect(state.lights.map((l) => l.hitAt)).toEqual([2500, 3000]);
+  });
+
+  test("노래가 끝나면 운동이 끝난다", () => {
+    const game = startSong();
+    expect(remainingMs(game)).toBe(5000);
+    expect(stepGame(game, 5000, [], center).ended).toBe(true);
   });
 });

@@ -39,11 +39,15 @@ export type Counts = Record<Judgement, number>;
 
 type Sample = { x: number; y: number; t: number };
 
+/** A song to play along: when each light should be hit (ms from the start) and its length. */
+export type Song = { beats: number[]; durationMs: number };
+
 export type GameState = {
   settings: Settings;
   startedAt: number;
   now: number;
-  light: Light | null;
+  /** Lights on screen; with a song several can be waiting at once. */
+  lights: Light[];
   nextSpawnAt: number;
   nextId: number;
   counts: Counts;
@@ -53,6 +57,9 @@ export type GameState = {
   aspect: number;
   /** Radius of the hand pointer in screen widths; it widens what counts as touching. */
   pointerRadius: number;
+  song: Song | null;
+  /** Index of the next beat in `song.beats` that has no light yet. */
+  nextBeat: number;
   ended: boolean;
 };
 
@@ -87,12 +94,13 @@ export function createGame(
   now: number,
   aspect = 1,
   pointerRadius = 0,
+  song: Song | null = null,
 ): GameState {
   return {
     settings,
     startedAt: now,
     now,
-    light: null,
+    lights: [],
     nextSpawnAt: now,
     nextId: 1,
     counts: { perfect: 0, good: 0, miss: 0, dodge: 0 },
@@ -100,6 +108,8 @@ export function createGame(
     history: {},
     aspect,
     pointerRadius,
+    song,
+    nextBeat: 0,
     ended: false,
   };
 }
@@ -112,81 +122,118 @@ export function stepGame(
   head: Point | null = null,
 ): GameState {
   if (state.ended) return state;
-  if (now - state.startedAt >= sessionMs(state.settings)) {
-    return { ...state, now, light: null, ended: true };
+  if (now - state.startedAt >= sessionMs(state)) {
+    return { ...state, now, lights: [], ended: true };
   }
 
   const history = recordHands(state.history, hands, now);
-  let { light, nextSpawnAt, nextId, counts, judged } = state;
+  let { nextSpawnAt, nextId, nextBeat, counts, judged } = state;
 
-  if (light?.kind === "dodge") {
-    if (now >= light.hitAt) {
-      // Without a visible head the dodge cannot be confirmed, so it counts as hit.
-      const dodged = head !== null && !isInside(head, light, state.aspect, 0);
-      const judgement: Judgement = dodged ? "dodge" : "miss";
-      counts = { ...counts, [judgement]: counts[judgement] + 1 };
-      judged = [
-        ...judged,
-        { id: light.id, x: light.x, y: light.y, judgement, at: now },
-      ];
-      light = null;
-      nextSpawnAt = now + GAP_AFTER_LIGHT_MS;
+  const lights: Light[] = [];
+  for (const light of state.lights) {
+    const judgement = judge(light, state, now, hands, history, head);
+    if (!judgement) {
+      lights.push(light);
+      continue;
     }
-  } else if (light) {
-    const delta = now - light.hitAt;
-    const hitter =
-      Math.abs(delta) <= GOOD_MS &&
-      hands.find(
-        (hand) =>
-          isInside(hand, light!, state.aspect, state.pointerRadius) &&
-          (state.settings.mode === "hobby" ||
-            isPunch(history[hand.id], hand, now, state.aspect)),
-      );
-
-    let judgement: Judgement | null = null;
-    if (hitter) judgement = Math.abs(delta) <= PERFECT_MS ? "perfect" : "good";
-    else if (delta > GOOD_MS) judgement = "miss";
-
-    if (judgement) {
-      counts = { ...counts, [judgement]: counts[judgement] + 1 };
-      judged = [
-        ...judged,
-        { id: light.id, x: light.x, y: light.y, judgement, at: now },
-      ];
-      light = null;
-      nextSpawnAt = now + GAP_AFTER_LIGHT_MS;
-    }
+    counts = { ...counts, [judgement]: counts[judgement] + 1 };
+    judged = [
+      ...judged,
+      { id: light.id, x: light.x, y: light.y, judgement, at: now },
+    ];
+    nextSpawnAt = now + GAP_AFTER_LIGHT_MS;
   }
 
-  if (!light && now >= nextSpawnAt) {
-    const timing = {
-      id: nextId,
-      spawnAt: now,
-      hitAt: now + CUE_MS[state.settings.cueSpeed],
-    };
-    // A red light appears where the head is now, so the player has to move it away.
-    if (state.settings.difficulty === "hard" && random() < DODGE_CHANCE) {
-      const at = head ?? DEFAULT_HEAD;
-      light = {
-        ...timing,
-        kind: "dodge",
-        x: at.x,
-        y: at.y,
-        radius: DODGE_RADIUS,
-      };
-    } else {
-      light = {
-        ...timing,
-        kind: "hit",
-        x: AREA.minX + random() * (AREA.maxX - AREA.minX),
-        y: AREA.minY + random() * (AREA.maxY - AREA.minY),
-        radius: LIGHT_RADIUS,
-      };
-    }
+  const cueMs = CUE_MS[state.settings.cueSpeed];
+  const spawn = (hitAt: number) => {
+    lights.push(makeLight(state, nextId, hitAt - cueMs, hitAt, random, head));
     nextId += 1;
+  };
+  if (state.song) {
+    // Each light appears one cue before its beat, so the cue closes right on the beat.
+    const beats = state.song.beats;
+    while (
+      nextBeat < beats.length &&
+      now >= state.startedAt + beats[nextBeat] - cueMs
+    ) {
+      spawn(state.startedAt + beats[nextBeat]);
+      nextBeat += 1;
+    }
+  } else if (lights.length === 0 && now >= nextSpawnAt) {
+    spawn(now + cueMs);
   }
 
-  return { ...state, now, light, nextSpawnAt, nextId, counts, judged, history };
+  return {
+    ...state,
+    now,
+    lights,
+    nextSpawnAt,
+    nextId,
+    nextBeat,
+    counts,
+    judged,
+    history,
+  };
+}
+
+/** The judgement for one light at this frame, or null while it is still waiting. */
+function judge(
+  light: Light,
+  state: GameState,
+  now: number,
+  hands: Hand[],
+  history: Record<string, Sample[]>,
+  head: Point | null,
+): Judgement | null {
+  if (light.kind === "dodge") {
+    if (now < light.hitAt) return null;
+    // Without a visible head the dodge cannot be confirmed, so it counts as hit.
+    const dodged = head !== null && !isInside(head, light, state.aspect, 0);
+    return dodged ? "dodge" : "miss";
+  }
+  const delta = now - light.hitAt;
+  const hitter =
+    Math.abs(delta) <= GOOD_MS &&
+    hands.find(
+      (hand) =>
+        isInside(hand, light, state.aspect, state.pointerRadius) &&
+        (state.settings.mode === "hobby" ||
+          isPunch(history[hand.id], hand, now, state.aspect)),
+    );
+  if (hitter) return Math.abs(delta) <= PERFECT_MS ? "perfect" : "good";
+  return delta > GOOD_MS ? "miss" : null;
+}
+
+function makeLight(
+  state: GameState,
+  id: number,
+  spawnAt: number,
+  hitAt: number,
+  random: () => number,
+  head: Point | null,
+): Light {
+  // A red light appears where the head is now, so the player has to move it away.
+  if (state.settings.difficulty === "hard" && random() < DODGE_CHANCE) {
+    const at = head ?? DEFAULT_HEAD;
+    return {
+      id,
+      spawnAt,
+      hitAt,
+      kind: "dodge",
+      x: at.x,
+      y: at.y,
+      radius: DODGE_RADIUS,
+    };
+  }
+  return {
+    id,
+    spawnAt,
+    hitAt,
+    kind: "hit",
+    x: AREA.minX + random() * (AREA.maxX - AREA.minX),
+    y: AREA.minY + random() * (AREA.maxY - AREA.minY),
+    radius: LIGHT_RADIUS,
+  };
 }
 
 export function accuracyOf(counts: Counts): number {
@@ -196,11 +243,11 @@ export function accuracyOf(counts: Counts): number {
 }
 
 export function remainingMs(state: GameState): number {
-  return Math.max(0, sessionMs(state.settings) - (state.now - state.startedAt));
+  return Math.max(0, sessionMs(state) - (state.now - state.startedAt));
 }
 
-function sessionMs(settings: Settings): number {
-  return settings.minutes * 60_000;
+function sessionMs(state: GameState): number {
+  return state.song ? state.song.durationMs : state.settings.minutes * 60_000;
 }
 
 function isInside(

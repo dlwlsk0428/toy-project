@@ -35,6 +35,7 @@ import {
 import { CameraImageError, waitForCameraImage } from "./camera";
 import { createHandTracker, type HandTracker } from "./hand-tracker";
 import { HowTo } from "./how-to";
+import { loadSong, playSong, type LoadedSong } from "./song";
 
 type Phase =
   | { name: "setup" }
@@ -99,6 +100,12 @@ const POINTER_SIZE_LABELS: Record<PointerSize, string> = {
   large: "크게",
 };
 
+type SongState =
+  | { name: "none" }
+  | { name: "analyzing"; fileName: string }
+  | { name: "ready"; song: LoadedSong }
+  | { name: "error"; message: string };
+
 type Offset = { x: number; y: number };
 // Each hand (keyed by its left/right label) keeps its own correction.
 type Offsets = Record<string, Offset>;
@@ -111,6 +118,9 @@ export function PunchRhythm() {
   const [game, setGame] = useState<GameState | null>(null);
   const [hands, setHands] = useState<Hand[]>([]);
   const [head, setHead] = useState<Point | null>(null);
+  const [song, setSong] = useState<SongState>({ name: "none" });
+  const audioRef = useRef<AudioContext | null>(null);
+  const stopSongRef = useRef<() => void>(() => {});
   const [aspect, setAspect] = useState(9 / 16);
   const [pointerSize, setPointerSize] = useState<PointerSize>("medium");
   const [offsets, setOffsets] = useState<Offsets>(NO_OFFSETS);
@@ -164,13 +174,35 @@ export function PunchRhythm() {
     streamRef.current = null;
     trackerRef.current?.close();
     trackerRef.current = null;
+    stopSongRef.current();
+    stopSongRef.current = () => {};
   }, []);
+
+  const pickSong = async (file: File) => {
+    setSong({ name: "analyzing", fileName: file.name });
+    try {
+      setSong({ name: "ready", song: await loadSong(file) });
+    } catch {
+      setSong({
+        name: "error",
+        message:
+          "이 파일은 노래로 읽지 못했습니다. mp3 같은 음악 파일을 골라 주세요.",
+      });
+    }
+  };
+
+  const loaded = song.name === "ready" ? song.song : null;
 
   useEffect(() => stopAll, [stopAll]);
 
   const start = useCallback(async () => {
     if (startingRef.current) return;
     startingRef.current = true;
+    // Browsers only let sound start after a click, so open the audio here.
+    if (loaded) {
+      audioRef.current ??= new AudioContext();
+      void audioRef.current.resume();
+    }
     setPhase({ name: "preparing" });
     setGame(null);
     setHands([]);
@@ -221,7 +253,10 @@ export function PunchRhythm() {
             frameRef.current = requestAnimationFrame(loop);
             return;
           }
-          state = createGame(settings, now, ratio, radius);
+          state = createGame(settings, now, ratio, radius, loaded);
+          if (loaded && audioRef.current) {
+            stopSongRef.current = playSong(audioRef.current, loaded.buffer);
+          }
           setPhase({ name: "playing" });
         }
         state = stepGame(state, now, seen, Math.random, tracked.head);
@@ -242,7 +277,7 @@ export function PunchRhythm() {
     } finally {
       startingRef.current = false;
     }
-  }, [settings, stopAll]);
+  }, [settings, stopAll, loaded]);
 
   if (phase.name === "setup" || phase.name === "error") {
     return (
@@ -251,6 +286,9 @@ export function PunchRhythm() {
         onChange={setSettings}
         onStart={start}
         error={phase.name === "error" ? phase.message : null}
+        song={song}
+        onPickSong={pickSong}
+        onClearSong={() => setSong({ name: "none" })}
       />
     );
   }
@@ -272,12 +310,17 @@ export function PunchRhythm() {
           {CUE_SPEED_LABELS[settings.cueSpeed]} ·{" "}
           {MODE_LABELS[settings.mode].label} 모드 ·{" "}
           {DIFFICULTY_LABELS[settings.difficulty].label}
+          {loaded && ` · ♪ ${loaded.name}`}
         </span>
         <span
           aria-label="남은 시간"
           className="font-mono text-lg text-foreground tabular-nums"
         >
-          {formatTime(game ? remainingMs(game) : settings.minutes * 60_000)}
+          {formatTime(
+            game
+              ? remainingMs(game)
+              : (loaded?.durationMs ?? settings.minutes * 60_000),
+          )}
         </span>
       </div>
       <div
@@ -438,42 +481,40 @@ function HandMarks({
 }
 
 function PlayField({ game, aspect }: { game: GameState; aspect: number }) {
-  const { light, now } = game;
-
-  let cueRadius = 0;
-  if (light) {
-    const left = Math.max(
-      0,
-      (light.hitAt - now) / (light.hitAt - light.spawnAt),
-    );
-    cueRadius = light.radius * (1 + 2 * left);
-  }
+  const { lights, now } = game;
 
   return (
     <div className="absolute inset-0">
-      {light && (
-        <>
-          <div
-            data-testid="light"
-            data-kind={light.kind}
-            className={cn(
-              "absolute -translate-1/2 rounded-full shadow-[0_0_24px]",
-              light.kind === "dodge"
-                ? "bg-red-500/60 shadow-red-400"
-                : "bg-blue-500/70 shadow-blue-400",
-            )}
-            style={circle(light.x, light.y, light.radius, aspect)}
-          />
-          <div
-            data-testid="cue"
-            className={cn(
-              "absolute -translate-1/2 rounded-full border-4",
-              light.kind === "dodge" ? "border-red-200" : "border-blue-200",
-            )}
-            style={circle(light.x, light.y, cueRadius, aspect)}
-          />
-        </>
-      )}
+      {lights.map((light) => {
+        const left = Math.max(
+          0,
+          (light.hitAt - now) / (light.hitAt - light.spawnAt),
+        );
+        const cueRadius = light.radius * (1 + 2 * left);
+        return (
+          <div key={light.id}>
+            <div
+              data-testid="light"
+              data-kind={light.kind}
+              className={cn(
+                "absolute -translate-1/2 rounded-full shadow-[0_0_24px]",
+                light.kind === "dodge"
+                  ? "bg-red-500/60 shadow-red-400"
+                  : "bg-blue-500/70 shadow-blue-400",
+              )}
+              style={circle(light.x, light.y, light.radius, aspect)}
+            />
+            <div
+              data-testid="cue"
+              className={cn(
+                "absolute -translate-1/2 rounded-full border-4",
+                light.kind === "dodge" ? "border-red-200" : "border-blue-200",
+              )}
+              style={circle(light.x, light.y, cueRadius, aspect)}
+            />
+          </div>
+        );
+      })}
       {game.judged
         .filter((j) => now - j.at < FEEDBACK_MS)
         .map((j) => (
@@ -494,19 +535,28 @@ function SetupCard({
   onChange,
   onStart,
   error,
+  song,
+  onPickSong,
+  onClearSong,
 }: {
   settings: Settings;
   onChange: (settings: Settings) => void;
   onStart: () => void;
   error: string | null;
+  song: SongState;
+  onPickSong: (file: File) => void;
+  onClearSong: () => void;
 }) {
+  const loaded = song.name === "ready" ? song.song : null;
   return (
     <Card className="w-full max-w-xl">
       <CardHeader>
         <CardTitle>웹 펀치 리듬</CardTitle>
         <CardDescription>
-          예고 원이 파란 불빛에 딱 맞는 순간 손으로 치세요. 한 번의 운동은{" "}
-          {settings.minutes}분입니다.
+          예고 원이 파란 불빛에 딱 맞는 순간 손으로 치세요.{" "}
+          {loaded
+            ? `노래 길이(${formatTime(loaded.durationMs)})만큼 운동합니다.`
+            : `한 번의 운동은 ${settings.minutes}분입니다.`}
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">
@@ -543,9 +593,11 @@ function SetupCard({
           onChange={(difficulty) => onChange({ ...settings, difficulty })}
           description={DIFFICULTY_LABELS[settings.difficulty].description}
         />
+        <SongField song={song} onPick={onPickSong} onClear={onClearSong} />
         <MinutesField
           minutes={settings.minutes}
           onChange={(minutes) => onChange({ ...settings, minutes })}
+          disabled={loaded !== null}
         />
         {error && (
           <p
@@ -557,7 +609,11 @@ function SetupCard({
         )}
       </CardContent>
       <CardFooter className="gap-2">
-        <Button size="lg" onClick={onStart}>
+        <Button
+          size="lg"
+          onClick={onStart}
+          disabled={song.name === "analyzing"}
+        >
           {error ? "다시 시도" : "시작"}
         </Button>
         <HowTo />
@@ -566,12 +622,65 @@ function SetupCard({
   );
 }
 
+function SongField({
+  song,
+  onPick,
+  onClear,
+}: {
+  song: SongState;
+  onPick: (file: File) => void;
+  onClear: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2">
+      <Label htmlFor="song">노래 (선택)</Label>
+      {song.name === "ready" ? (
+        <div className="flex items-center justify-between gap-2 rounded-lg bg-muted p-3 text-sm">
+          <span>
+            ♪ {song.song.name} · BPM {Math.round(song.song.bpm)} ·{" "}
+            {formatTime(song.song.durationMs)}
+          </span>
+          <Button size="sm" variant="outline" onClick={onClear}>
+            노래 빼기
+          </Button>
+        </div>
+      ) : (
+        <Input
+          id="song"
+          type="file"
+          accept="audio/*"
+          disabled={song.name === "analyzing"}
+          onChange={(event) => {
+            const file = event.target.files?.[0];
+            if (file) onPick(file);
+          }}
+        />
+      )}
+      <p
+        role={song.name === "error" ? "alert" : undefined}
+        className={cn(
+          "text-sm",
+          song.name === "error" ? "text-destructive" : "text-muted-foreground",
+        )}
+      >
+        {song.name === "analyzing"
+          ? `${song.fileName}의 박자를 분석하고 있습니다…`
+          : song.name === "error"
+            ? song.message
+            : "노래를 고르면 박자를 분석해 불빛이 박자에 맞춰 나옵니다. 파일은 이 컴퓨터 밖으로 나가지 않습니다."}
+      </p>
+    </div>
+  );
+}
+
 function MinutesField({
   minutes,
   onChange,
+  disabled,
 }: {
   minutes: number;
   onChange: (minutes: number) => void;
+  disabled: boolean;
 }) {
   // Keep the typed text separately so the field can be empty while typing.
   const [text, setText] = useState(String(minutes));
@@ -585,6 +694,7 @@ function MinutesField({
         min={MIN_MINUTES}
         max={MAX_MINUTES}
         className="w-28"
+        disabled={disabled}
         value={text}
         onChange={(event) => {
           setText(event.target.value);
@@ -600,7 +710,9 @@ function MinutesField({
         onBlur={() => setText(String(minutes))}
       />
       <p className="text-sm text-muted-foreground">
-        {MIN_MINUTES}분부터 {MAX_MINUTES}분까지 정할 수 있습니다.
+        {disabled
+          ? "노래를 고르면 노래 길이만큼 운동합니다."
+          : `${MIN_MINUTES}분부터 ${MAX_MINUTES}분까지 정할 수 있습니다.`}
       </p>
     </div>
   );
