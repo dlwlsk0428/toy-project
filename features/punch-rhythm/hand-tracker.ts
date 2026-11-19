@@ -11,6 +11,8 @@ const POSE_MODEL_URL =
 
 // Wrist and the four knuckles: their average is roughly the center of a fist.
 const FIST_POINTS = [0, 5, 9, 13, 17];
+const WRIST = 0;
+const MIDDLE_KNUCKLE = 9;
 // Pose landmark 0 is the nose, used as the head position.
 const NOSE = 0;
 const MIN_NOSE_VISIBILITY = 0.5;
@@ -72,6 +74,10 @@ export async function createHandTracker({
             // The video is shown mirrored, so mirror the hand too.
             x: 1 - x,
             y,
+            size: Math.hypot(
+              points[WRIST].x - points[MIDDLE_KNUCKLE].x,
+              points[WRIST].y - points[MIDDLE_KNUCKLE].y,
+            ),
           };
         }),
         head: null,
