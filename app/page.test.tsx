@@ -1,16 +1,17 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { expect, test } from "vitest";
 
 import Home from "@/app/page";
 
-test("홈 화면은 시작 안내 제목과 배포 링크를 보여준다", () => {
+test("홈 화면은 예고 속도·모드·난이도·시간을 기본값으로 보여 주고 시작할 수 있다", () => {
   render(<Home />);
 
-  expect(
-    screen.getByRole("heading", { level: 1, name: /To get started/i })
-  ).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /Deploy Now/i })).toHaveAttribute(
-    "href",
-    expect.stringContaining("vercel.com/new")
-  );
+  const pressed = (group: string, name: string) =>
+    within(screen.getByRole("group", { name: group })).getByRole("button", { name });
+
+  expect(pressed("예고 속도", "보통")).toHaveAttribute("aria-pressed", "true");
+  expect(pressed("모드", "취미")).toHaveAttribute("aria-pressed", "true");
+  expect(pressed("난이도", "보통")).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByLabelText("운동 시간 (분)")).toHaveValue(3);
+  expect(screen.getByRole("button", { name: "시작" })).toBeInTheDocument();
 });
