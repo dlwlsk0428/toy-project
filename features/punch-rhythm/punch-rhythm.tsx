@@ -68,7 +68,10 @@ const POINTER_SIZE_LABELS: Record<PointerSize, string> = {
 };
 
 type Offset = { x: number; y: number };
+// Each hand (keyed by its left/right label) keeps its own correction.
+type Offsets = Record<string, Offset>;
 const NO_OFFSET: Offset = { x: 0, y: 0 };
+const NO_OFFSETS: Offsets = {};
 
 export function PunchRhythm() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
@@ -77,7 +80,7 @@ export function PunchRhythm() {
   const [hands, setHands] = useState<Hand[]>([]);
   const [aspect, setAspect] = useState(9 / 16);
   const [pointerSize, setPointerSize] = useState<PointerSize>("medium");
-  const [offset, setOffset] = useState<Offset>(NO_OFFSET);
+  const [offsets, setOffsets] = useState<Offsets>(NO_OFFSETS);
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -87,13 +90,13 @@ export function PunchRhythm() {
   const startRequestedRef = useRef(false);
   const fieldRef = useRef<HTMLDivElement>(null);
   // The running loop reads the latest pointer settings through refs.
-  const pointerRef = useRef({ offset: NO_OFFSET, radius: POINTER_RADIUS.medium });
+  const pointerRef = useRef({ offsets: NO_OFFSETS, radius: POINTER_RADIUS.medium });
   const rawHandsRef = useRef<Hand[]>([]);
   const draggingRef = useRef<string | null>(null);
 
-  const changeOffset = (next: Offset) => {
-    pointerRef.current.offset = next;
-    setOffset(next);
+  const changeOffsets = (next: Offsets) => {
+    pointerRef.current.offsets = next;
+    setOffsets(next);
   };
   const changePointerSize = (size: PointerSize) => {
     pointerRef.current.radius = POINTER_RADIUS[size];
@@ -107,9 +110,12 @@ export function PunchRhythm() {
     const rect = fieldRef.current?.getBoundingClientRect();
     const raw = rawHandsRef.current.find((hand) => hand.id === id);
     if (!id || !rect || !raw) return;
-    changeOffset({
-      x: (event.clientX - rect.left) / rect.width - raw.x,
-      y: (event.clientY - rect.top) / rect.height - raw.y,
+    changeOffsets({
+      ...pointerRef.current.offsets,
+      [id]: {
+        x: (event.clientX - rect.left) / rect.width - raw.x,
+        y: (event.clientY - rect.top) / rect.height - raw.y,
+      },
     });
   };
 
@@ -155,8 +161,11 @@ export function PunchRhythm() {
         const ready = video.readyState >= 2 && video.videoWidth > 0;
         const raw = (ready && trackerRef.current?.detect(video, now)) || [];
         rawHandsRef.current = raw;
-        const { offset: shift, radius } = pointerRef.current;
-        const seen = raw.map((hand) => ({ ...hand, x: hand.x + shift.x, y: hand.y + shift.y }));
+        const { offsets: shifts, radius } = pointerRef.current;
+        const seen = raw.map((hand) => {
+          const shift = shifts[hand.id] ?? NO_OFFSET;
+          return { ...hand, x: hand.x + shift.x, y: hand.y + shift.y };
+        });
         setHands(seen);
         if (!state) {
           const punched =
@@ -259,12 +268,12 @@ export function PunchRhythm() {
             }))}
             value={pointerSize}
             onChange={changePointerSize}
-            description="손을 든 채로 흰 포인터를 마우스로 끌어 실제 주먹 위치에 맞출 수 있습니다."
+            description="손을 든 채로 흰 포인터를 마우스로 끌어 실제 주먹 위치에 맞추세요. 왼손과 오른손을 따로 맞출 수 있습니다."
           />
           <Button
             variant="outline"
-            onClick={() => changeOffset(NO_OFFSET)}
-            disabled={offset.x === 0 && offset.y === 0}
+            onClick={() => changeOffsets(NO_OFFSETS)}
+            disabled={Object.keys(offsets).length === 0}
           >
             위치 초기화
           </Button>
