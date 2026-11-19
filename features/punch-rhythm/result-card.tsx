@@ -16,14 +16,19 @@ import {
 import { lastName } from "@/lib/local-records";
 import { cn } from "@/lib/utils";
 
-import { accuracyOf, type GameState, type Judgement, type Settings } from "./game";
+import {
+  accuracyOf,
+  type GameState,
+  type Judgement,
+  type Settings,
+} from "./game";
 import {
   CUE_SPEED_LABELS,
   DIFFICULTY_LABELS,
   JUDGEMENT_LABELS,
   MODE_LABELS,
 } from "./labels";
-import { drawShareCard, shareCard } from "./share-card";
+import { ShareCardDialog } from "./share-card-dialog";
 import {
   compareWithHistory,
   estimateKcal,
@@ -103,21 +108,17 @@ export function ResultCard({
   const streak = streakDays(sessionsAfter, now);
   const recommendation = recommendSettings(game.settings, accuracy);
 
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const share = () => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    drawShareCard(canvas, {
-      name: lastName(),
-      accuracy,
-      grade,
-      maxCombo: game.maxCombo,
-      punches,
-      kcal,
-      label,
-      at: now,
-    });
-    void shareCard(canvas);
+  const shareData = {
+    accuracy,
+    grade,
+    maxCombo: game.maxCombo,
+    punches,
+    kcal,
+    counts,
+    showDodge: game.settings.difficulty === "hard",
+    label,
+    at: now,
+    best,
   };
 
   return (
@@ -220,15 +221,12 @@ export function ResultCard({
             detail: record.label,
           })}
         />
-        <canvas ref={canvasRef} className="hidden" aria-hidden />
       </CardContent>
       <CardFooter className="flex-wrap gap-2">
         <Button size="lg" className="flex-1" onClick={onRetry}>
           다시 하기
         </Button>
-        <Button size="lg" variant="outline" onClick={share}>
-          공유 카드 저장
-        </Button>
+        <ShareCardDialog data={shareData} defaultName={lastName} />
         <Button size="lg" variant="outline" onClick={onBack}>
           설정 바꾸기
         </Button>
@@ -236,3 +234,4 @@ export function ResultCard({
     </Card>
   );
 }
+
