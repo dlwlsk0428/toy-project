@@ -123,7 +123,11 @@ export function PhoneController({ room }: { room: string | null }) {
       <CardContent className="flex flex-col gap-4">
         {status.name === "ready" ? (
           <div className="rounded-xl bg-muted p-6 text-center">
-            <p className="text-sm text-muted-foreground">
+            <p className="flex items-center justify-center gap-2 text-sm text-muted-foreground">
+              <span
+                aria-hidden
+                className="size-2 animate-pulse rounded-full bg-primary"
+              />
               연결됨 · 방금 친 세기
             </p>
             <p className="font-heading text-5xl font-semibold tabular-nums">

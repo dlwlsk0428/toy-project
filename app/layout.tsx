@@ -2,7 +2,6 @@ import type { Metadata } from "next";
 import {
   Anton,
   Archivo_Black,
-  Geist,
   Geist_Mono,
   Inter,
   Oswald,
@@ -30,11 +29,6 @@ const oswald = Oswald({
   weight: ["500", "700"],
 });
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
-  subsets: ["latin"],
-});
-
 const geistMono = Geist_Mono({
   variable: "--font-geist-mono",
   subsets: ["latin"],
@@ -49,7 +43,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="ko"
-      className={cn("h-full", "antialiased", geistSans.variable, geistMono.variable, "font-sans", inter.variable, oswald.variable, anton.variable, archivoBlack.variable)}
+      className={cn("h-full", "antialiased", geistMono.variable, "font-sans", inter.variable, oswald.variable, anton.variable, archivoBlack.variable)}
     >
       <body className="min-h-full flex flex-col">{children}</body>
     </html>

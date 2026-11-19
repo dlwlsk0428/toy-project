@@ -4,6 +4,7 @@ import {
   accuracyOf,
   createGame,
   DEFAULT_SETTINGS,
+  headLostMs,
   isHandOnTarget,
   START_TARGET,
   remainingMs,
@@ -76,6 +77,38 @@ describe("취미 모드 판정", () => {
       expect(next.counts[expected]).toBe(1);
     },
   );
+
+  test("머리 확인을 켜면 머리가 5초 넘게 안 보일 때 바로 끝나고, 보이면 계속된다", () => {
+    const head = { x: 0.5, y: 0.3 };
+    let state = createGame(DEFAULT_SETTINGS, 0, 1, 0, null, true);
+    state = stepGame(state, 4000, [], center, head);
+    state = stepGame(state, 8900, [], center, null);
+    expect(state.ended).toBe(false);
+    expect(headLostMs(state)).toBe(4900);
+    state = stepGame(state, 9000, [], center, null);
+    expect(state.ended).toBe(true);
+    expect(state.endReason).toBe("head-lost");
+  });
+
+  test("머리 확인을 끄면 머리가 안 보여도 시간이 다 될 때까지 계속된다", () => {
+    const state = stepGame(start(), 60_000, [], center, null);
+    expect(state.ended).toBe(false);
+    expect(stepGame(state, 180_000, [], center).endReason).toBe("time");
+  });
+
+  test("놓치지 않고 이어 치면 콤보가 쌓이고, 놓치면 0으로 돌아가며 최대 콤보는 남는다", () => {
+    let state = start();
+    const hitNext = () => {
+      state = stepGame(state, state.lights[0].hitAt, [onLight(state)], center);
+      state = stepGame(state, state.nextSpawnAt, [], center);
+    };
+    hitNext();
+    hitNext();
+    expect(state.combo).toBe(2);
+    state = stepGame(state, state.lights[0].hitAt + 300, [], center);
+    expect(state.combo).toBe(0);
+    expect(state.maxCombo).toBe(2);
+  });
 
   test("판정 범위가 열리기 전에는 손이 불빛 안에 있어도 판정하지 않는다", () => {
     const game = start();

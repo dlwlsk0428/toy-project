@@ -1,9 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CheckIcon, MusicIcon } from "lucide-react";
 
-import { Fanfare } from "@/components/fanfare";
-import { RecordBoard } from "@/components/record-board";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -21,22 +20,32 @@ import {
   accuracyOf,
   createGame,
   DEFAULT_SETTINGS,
+  HEAD_LOST_MS,
+  HEAD_WARN_MS,
+  headLostMs,
   isHandOnTarget,
   remainingMs,
   START_TARGET,
   stepGame,
   type CueSpeed,
   type Difficulty,
+  type Mode,
   type Point,
   type GameState,
   type Hand,
-  type Judgement,
-  type Mode,
   type Settings,
 } from "./game";
 import { CameraImageError, waitForCameraImage } from "./camera";
 import { createHandTracker, type HandTracker } from "./hand-tracker";
 import { HowTo } from "./how-to";
+import {
+  CUE_SPEED_LABELS,
+  DIFFICULTY_LABELS,
+  formatTime,
+  JUDGEMENT_LABELS,
+  MODE_LABELS,
+} from "./labels";
+import { ResultCard, StoppedCard } from "./result-card";
 import { sliceSong } from "./beats";
 import { loadSong, playSong, type LoadedSong } from "./song";
 
@@ -48,35 +57,6 @@ type Phase =
   | { name: "error"; message: string }
   | { name: "playing" }
   | { name: "result"; game: GameState };
-
-const CUE_SPEED_LABELS: Record<CueSpeed, string> = {
-  slow: "느림",
-  normal: "보통",
-  fast: "빠름",
-};
-
-const MODE_LABELS: Record<Mode, { label: string; description: string }> = {
-  hobby: {
-    label: "취미",
-    description: "타이밍에 맞춰 손을 불빛에 대면 됩니다.",
-  },
-  pro: {
-    label: "선수",
-    description: "손을 빠르게 뻗어 불빛을 쳐야 인정됩니다.",
-  },
-};
-
-const DIFFICULTY_LABELS: Record<
-  Difficulty,
-  { label: string; description: string }
-> = {
-  normal: { label: "보통", description: "파란 불빛만 치면 됩니다." },
-  hard: {
-    label: "어려움",
-    description:
-      "파란 불빛을 치면서, 머리 쪽에 나오는 빨간 불빛은 고개를 움직여 피해야 합니다.",
-  },
-};
 
 const SYNC_LIMIT_MS = 300;
 const SECTION_STEP_MS = 5000;
@@ -91,13 +71,6 @@ const SECTION_LENGTHS = [
 type Section = { startMs: number; lengthMs: number };
 const MIN_MINUTES = 1;
 const MAX_MINUTES = 10;
-
-const JUDGEMENT_LABELS: Record<Judgement, string> = {
-  perfect: "Perfect",
-  good: "Good",
-  miss: "Miss",
-  dodge: "회피!",
-};
 
 const FEEDBACK_MS = 600;
 
@@ -287,9 +260,8 @@ export function PunchRhythm() {
         audio: false,
       });
       streamRef.current = stream;
-      trackerRef.current = await createHandTracker({
-        withHead: settings.difficulty === "hard",
-      });
+      // The head is always tracked: red lights need it, and a run stops when it is gone.
+      trackerRef.current = await createHandTracker({ withHead: true });
 
       const video = videoRef.current!;
       video.srcObject = stream;
@@ -342,9 +314,9 @@ export function PunchRhythm() {
             stopSongRef.current = playing.stop;
             songClockRef.current = playing.songMs;
             // The song starts at its own 0 ms, slightly after this frame.
-            state = createGame(settings, 0, ratio, radius, part);
+            state = createGame(settings, 0, ratio, radius, part, true);
           } else {
-            state = createGame(settings, frameAt, ratio, radius, null);
+            state = createGame(settings, frameAt, ratio, radius, null, true);
           }
           setPhase({ name: "playing" });
         }
@@ -388,6 +360,12 @@ export function PunchRhythm() {
     );
   }
 
+  if (phase.name === "result" && phase.game.endReason === "head-lost") {
+    return (
+      <StoppedCard onRetry={start} onBack={() => setPhase({ name: "setup" })} />
+    );
+  }
+
   if (phase.name === "result") {
     return (
       <ResultCard
@@ -395,30 +373,21 @@ export function PunchRhythm() {
         songName={loaded?.name ?? null}
         onRetry={start}
         onBack={() => setPhase({ name: "setup" })}
+        onApplySettings={(next) => {
+          setSettings(next);
+          setPhase({ name: "setup" });
+        }}
       />
     );
   }
 
   return (
     <div className="flex w-full flex-col gap-3">
-      <div className="flex items-center justify-between text-sm text-muted-foreground">
-        <span>
-          {CUE_SPEED_LABELS[settings.cueSpeed]} ·{" "}
-          {MODE_LABELS[settings.mode].label} 모드 ·{" "}
-          {DIFFICULTY_LABELS[settings.difficulty].label}
-          {loaded && ` · ♪ ${loaded.name}`}
-        </span>
-        <span
-          aria-label="남은 시간"
-          className="font-mono text-lg text-foreground tabular-nums"
-        >
-          {formatTime(
-            game
-              ? remainingMs(game)
-              : (part?.durationMs ?? settings.minutes * 60_000),
-          )}
-        </span>
-      </div>
+      <Hud
+        summary={`${CUE_SPEED_LABELS[settings.cueSpeed]} · ${MODE_LABELS[settings.mode].label} 모드 · ${DIFFICULTY_LABELS[settings.difficulty].label}${loaded ? ` · ♪ ${loaded.name}` : ""}`}
+        game={game}
+        totalMs={part?.durationMs ?? settings.minutes * 60_000}
+      />
       <div
         ref={fieldRef}
         onPointerMove={dragPointer}
@@ -433,7 +402,7 @@ export function PunchRhythm() {
       >
         <video
           ref={videoRef}
-          className="absolute inset-0 size-full -scale-x-100 object-cover opacity-70"
+          className="absolute inset-0 size-full -scale-x-100 object-cover brightness-[0.55]"
           playsInline
           muted
         />
@@ -463,6 +432,16 @@ export function PunchRhythm() {
           />
         )}
         {game && <PlayField game={game} aspect={aspect} />}
+        {game && headLostMs(game) >= HEAD_WARN_MS && (
+          <div
+            role="alert"
+            className="pointer-events-none absolute inset-x-4 top-4 rounded-lg bg-destructive/90 px-4 py-2 text-center font-semibold text-white"
+          >
+            얼굴이 보이지 않습니다. 카메라 앞으로 오세요 ·{" "}
+            {Math.ceil((HEAD_LOST_MS - headLostMs(game)) / 1000)}초 뒤 운동이
+            끝납니다
+          </div>
+        )}
         {settings.difficulty === "hard" && head && (
           <div
             data-testid="head"
@@ -481,15 +460,18 @@ export function PunchRhythm() {
           }
         />
         {phase.name === "calibrating" && (
-          <p className="pointer-events-none absolute inset-x-0 top-4 text-center text-lg font-medium text-white drop-shadow">
+          <div className="pointer-events-none absolute inset-x-0 top-3 flex flex-col items-center gap-2 px-3 text-center text-lg font-medium text-white [text-shadow:0_0_4px_#000,0_2px_8px_#000]">
+            <CalibrationSteps step={photo && countdown === null ? 2 : 1} />
+            <p>
             {countdown !== null
               ? "준비 자세를 잡고 기다리세요"
               : !photo
                 ? "아래의 준비 자세 찍기를 누르고, 3초 안에 주먹을 들어 준비 자세를 잡으세요"
                 : photo.hands.length === 0
                   ? "사진에서 손을 찾지 못했습니다. 손이 잘 보이게 다시 찍어 주세요"
-                  : "사진 속 주먹 위치로 흰 포인터를 끌어 맞추세요"}
-          </p>
+                  : "사진 속 주먹 위치로 포인터를 끌어 맞추세요"}
+            </p>
+          </div>
         )}
       </div>
       {phase.name === "calibrating" && (
@@ -504,7 +486,7 @@ export function PunchRhythm() {
             )}
             value={pointerSize}
             onChange={changePointerSize}
-            description="준비 자세를 찍으면 3초 뒤 사진이 찍힙니다. 사진 위에서 흰 포인터를 끌어 주먹에 맞추세요. 왼손과 오른손을 따로 맞출 수 있습니다."
+            description="왼손과 오른손 포인터를 따로 맞출 수 있습니다."
           />
           <div className="flex flex-wrap gap-2">
             <Button
@@ -521,7 +503,7 @@ export function PunchRhythm() {
               onClick={() => changeOffsets(NO_OFFSETS)}
               disabled={Object.keys(offsets).length === 0}
             >
-              위치 초기화
+              포인터 초기화
             </Button>
             <Button
               size="lg"
@@ -534,11 +516,103 @@ export function PunchRhythm() {
                 setPhase({ name: "ready" });
               }}
             >
-              위치 조정 완료
+              포인터 맞추기 완료
             </Button>
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+const CALIBRATION_STEPS = ["준비 자세 찍기", "포인터 맞추기", "완료"];
+
+/** "1/3 준비 자세 찍기 → 2/3 포인터 맞추기 → 3/3 완료", with the current step lit. */
+function CalibrationSteps({ step }: { step: 1 | 2 | 3 }) {
+  return (
+    <ol
+      aria-label={`${step}/${CALIBRATION_STEPS.length} 단계`}
+      className="flex flex-wrap justify-center gap-1 text-sm"
+    >
+      {CALIBRATION_STEPS.map((name, i) => (
+        <li
+          key={name}
+          aria-current={i + 1 === step ? "step" : undefined}
+          className={cn(
+            "rounded-full px-3 py-1 [text-shadow:none]",
+            i + 1 === step
+              ? "bg-primary font-semibold text-primary-foreground"
+              : "bg-black/60 text-white/70",
+          )}
+        >
+          {i + 1}/{CALIBRATION_STEPS.length} {name}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** Settings at a glance, then the live figures the player chases: accuracy, combo, time. */
+function Hud({
+  summary,
+  game,
+  totalMs,
+}: {
+  summary: string;
+  game: GameState | null;
+  totalMs: number;
+}) {
+  const left = game ? remainingMs(game) : totalMs;
+  const progress = totalMs > 0 ? 1 - left / totalMs : 0;
+  return (
+    <div className="flex flex-col gap-2">
+      <div className="flex items-end justify-between gap-3">
+        <dl className="flex items-end gap-5">
+          <div>
+            <dt className="text-xs text-muted-foreground">정확도</dt>
+            <dd className="font-heading text-3xl font-semibold tabular-nums">
+              {game && game.judged.length > 0
+                ? `${accuracyOf(game.judged).toFixed(1)}%`
+                : "–"}
+            </dd>
+          </div>
+          <div>
+            <dt className="text-xs text-muted-foreground">콤보</dt>
+            <dd
+              className={cn(
+                "font-heading text-3xl font-semibold tabular-nums",
+                (game?.combo ?? 0) >= 5 && "text-primary",
+              )}
+            >
+              {game?.combo ?? 0}
+            </dd>
+          </div>
+        </dl>
+        <div className="text-right">
+          <p className="hidden text-xs text-muted-foreground sm:block">
+            {summary}
+          </p>
+          <p
+            aria-label="남은 시간"
+            className="font-heading text-3xl font-semibold tabular-nums"
+          >
+            {formatTime(left)}
+          </p>
+        </div>
+      </div>
+      <div
+        role="progressbar"
+        aria-label="운동 진행"
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(progress * 100)}
+        className="h-1.5 overflow-hidden rounded-full bg-muted"
+      >
+        <div
+          className="h-full bg-primary transition-[width]"
+          style={{ width: `${progress * 100}%` }}
+        />
+      </div>
     </div>
   );
 }
@@ -571,8 +645,8 @@ function StartMark({
       >
         시작
       </button>
-      <p className="absolute inset-x-0 bottom-6 text-center text-lg font-medium text-white drop-shadow">
-        손으로 시작을 치면 운동이 시작됩니다
+      <p className="absolute inset-x-0 bottom-6 text-center text-lg font-medium text-white [text-shadow:0_0_4px_#000,0_2px_8px_#000]">
+        주먹으로 시작 표시를 치면 운동이 시작됩니다
       </p>
     </div>
   );
@@ -597,7 +671,7 @@ function HandMarks({
           data-testid="hand"
           onPointerDown={onGrab && (() => onGrab(hand.id))}
           className={cn(
-            "absolute min-h-6 min-w-6 -translate-1/2 rounded-full border-2 border-white bg-white/40",
+            "absolute min-h-6 min-w-6 -translate-1/2 rounded-full border-2 border-primary bg-white/50 shadow-[0_0_0_2px_rgba(0,0,0,0.75)]",
             onGrab && "pointer-events-auto cursor-grab",
           )}
           style={circle(hand.x, hand.y, radius, aspect)}
@@ -625,17 +699,22 @@ function PlayField({ game, aspect }: { game: GameState; aspect: number }) {
               data-kind={light.kind}
               className={cn(
                 "absolute -translate-1/2 rounded-full shadow-[0_0_24px]",
+                "flex items-center justify-center text-2xl font-black text-white",
                 light.kind === "dodge"
-                  ? "bg-red-500/60 shadow-red-400"
+                  ? "border-4 border-dashed border-red-100 bg-red-500/60 shadow-red-400"
                   : "bg-blue-500/70 shadow-blue-400",
               )}
               style={circle(light.x, light.y, light.radius, aspect)}
-            />
+            >
+              {light.kind === "dodge" && <span aria-hidden>⚠</span>}
+            </div>
             <div
               data-testid="cue"
               className={cn(
                 "absolute -translate-1/2 rounded-full border-4",
-                light.kind === "dodge" ? "border-red-200" : "border-blue-200",
+                light.kind === "dodge"
+                  ? "border-dashed border-red-200"
+                  : "border-blue-200",
               )}
               style={circle(light.x, light.y, cueRadius, aspect)}
             />
@@ -647,7 +726,7 @@ function PlayField({ game, aspect }: { game: GameState; aspect: number }) {
         .map((j) => (
           <div
             key={j.id}
-            className="absolute -translate-1/2 text-2xl font-bold text-white drop-shadow"
+            className="absolute -translate-1/2 text-3xl font-black text-white [text-shadow:0_0_4px_#000,0_2px_6px_#000,0_0_14px_#000]"
             style={{ left: `${j.x * 100}%`, top: `${j.y * 100}%` }}
           >
             {JUDGEMENT_LABELS[j.judgement]}
@@ -656,6 +735,16 @@ function PlayField({ game, aspect }: { game: GameState; aspect: number }) {
             )}
           </div>
         ))}
+      {game.combo >= 3 &&
+        game.judged.length > 0 &&
+        now - game.judged[game.judged.length - 1].at < FEEDBACK_MS && (
+          <div
+            key={game.combo}
+            className="pointer-events-none absolute inset-x-0 bottom-6 animate-in text-center font-heading text-4xl font-semibold text-primary zoom-in-75 [text-shadow:0_0_4px_#000,0_2px_10px_#000]"
+          >
+            {game.combo} 콤보!
+          </div>
+        )}
     </div>
   );
 }
@@ -687,19 +776,19 @@ function SetupCard({
 }) {
   const loaded = song.name === "ready" ? song.song : null;
   return (
-    <Card className="w-full max-w-xl">
+    <Card className="w-full max-w-2xl gap-4 py-4">
       <CardHeader>
-        <CardTitle>웹 펀치 리듬</CardTitle>
+        <CardTitle>운동 설정</CardTitle>
         <CardDescription>
-          예고 원이 파란 불빛에 딱 맞는 순간 손으로 치세요.{" "}
+          줄어드는 원이 파란 불빛에 딱 맞는 순간 주먹으로 치세요.{" "}
           {loaded
             ? `고른 구간(${formatTime(Math.min(section.lengthMs, loaded.durationMs - section.startMs))})만큼 운동합니다.`
             : `한 번의 운동은 ${settings.minutes}분입니다.`}
         </CardDescription>
       </CardHeader>
-      <CardContent className="flex flex-col gap-6">
+      <CardContent className="grid gap-x-6 gap-y-4 sm:grid-cols-2">
         <ChoiceGroup
-          label="예고 속도"
+          label="원 속도"
           options={(Object.keys(CUE_SPEED_LABELS) as CueSpeed[]).map(
             (value) => ({
               value,
@@ -731,36 +820,52 @@ function SetupCard({
           onChange={(difficulty) => onChange({ ...settings, difficulty })}
           description={DIFFICULTY_LABELS[settings.difficulty].description}
         />
-        <SongField song={song} onPick={onPickSong} onClear={onClearSong} />
-        {loaded && (
-          <SectionField
-            durationMs={loaded.durationMs}
-            section={section}
-            onChange={onSectionChange}
-          />
-        )}
-        {loaded && <SyncField value={syncMs} onChange={onSyncChange} />}
         <MinutesField
           minutes={settings.minutes}
           onChange={(minutes) => onChange({ ...settings, minutes })}
           disabled={loaded !== null}
         />
+        <details
+          className="group rounded-lg border px-3 py-2 sm:col-span-2"
+          open={song.name !== "none" || undefined}
+        >
+          <summary className="cursor-pointer text-sm font-medium select-none">
+            노래로 운동하기 (선택)
+            {loaded && (
+              <span className="ml-2 font-normal text-muted-foreground">
+                ♪ {loaded.name}
+              </span>
+            )}
+          </summary>
+          <div className="mt-3 flex flex-col gap-4">
+            <SongField song={song} onPick={onPickSong} onClear={onClearSong} />
+            {loaded && (
+              <SectionField
+                durationMs={loaded.durationMs}
+                section={section}
+                onChange={onSectionChange}
+              />
+            )}
+            {loaded && <SyncField value={syncMs} onChange={onSyncChange} />}
+          </div>
+        </details>
         {error && (
           <p
             role="alert"
-            className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive"
+            className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive sm:col-span-2"
           >
             {error}
           </p>
         )}
       </CardContent>
-      <CardFooter className="gap-2">
+      <CardFooter className="sticky bottom-0 z-10 gap-2 border-t bg-card pt-4">
         <Button
           size="lg"
+          className="flex-1"
           onClick={onStart}
           disabled={song.name === "analyzing"}
         >
-          {error ? "다시 시도" : "시작"}
+          {error ? "다시 시도" : "카메라 켜고 시작"}
         </Button>
         <HowTo />
       </CardFooter>
@@ -918,7 +1023,7 @@ function SyncField({
   return (
     <div className="flex flex-col gap-2">
       <Label htmlFor="sync">
-        싱크 보정: {value > 0 ? "+" : ""}
+        박자 보정: {value > 0 ? "+" : ""}
         {value}ms
       </Label>
       <input
@@ -948,9 +1053,10 @@ function SongField({
   onPick: (file: File) => void;
   onClear: () => void;
 }) {
+  const fileRef = useRef<HTMLInputElement>(null);
   return (
     <div className="flex flex-col gap-2">
-      <Label htmlFor="song">노래 (선택)</Label>
+      <Label htmlFor="song">노래 파일</Label>
       {song.name === "ready" ? (
         <div className="flex items-center justify-between gap-2 rounded-lg bg-muted p-3 text-sm">
           <span>
@@ -958,20 +1064,34 @@ function SongField({
             {formatTime(song.song.durationMs)}
           </span>
           <Button size="sm" variant="outline" onClick={onClear}>
-            노래 빼기
+            노래 지우기
           </Button>
         </div>
       ) : (
-        <Input
-          id="song"
-          type="file"
-          accept="audio/*"
-          disabled={song.name === "analyzing"}
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) onPick(file);
-          }}
-        />
+        <div>
+          <input
+            ref={fileRef}
+            id="song"
+            type="file"
+            accept="audio/*"
+            className="sr-only"
+            disabled={song.name === "analyzing"}
+            onChange={(event) => {
+              const file = event.target.files?.[0];
+              if (file) onPick(file);
+              event.target.value = "";
+            }}
+          />
+          <Button
+            variant="outline"
+            size="lg"
+            disabled={song.name === "analyzing"}
+            onClick={() => fileRef.current?.click()}
+          >
+            <MusicIcon aria-hidden />
+            노래 파일 고르기
+          </Button>
+        </div>
       )}
       <p
         role={song.name === "error" ? "alert" : undefined}
@@ -1029,7 +1149,7 @@ function MinutesField({
       <p className="text-sm text-muted-foreground">
         {disabled
           ? "노래를 고르면 고른 구간만큼 운동합니다."
-          : `${MIN_MINUTES}분부터 ${MAX_MINUTES}분까지 정할 수 있습니다.`}
+          : `${MIN_MINUTES}–${MAX_MINUTES}분`}
       </p>
     </div>
   );
@@ -1055,10 +1175,13 @@ function ChoiceGroup<T extends string>({
         {options.map((option) => (
           <Button
             key={option.value}
+            size="lg"
+            className="min-w-16"
             variant={option.value === value ? "default" : "outline"}
             aria-pressed={option.value === value}
             onClick={() => onChange(option.value)}
           >
+            {option.value === value && <CheckIcon aria-hidden />}
             {option.label}
           </Button>
         ))}
@@ -1067,94 +1190,6 @@ function ChoiceGroup<T extends string>({
         <p className="text-sm text-muted-foreground">{description}</p>
       )}
     </div>
-  );
-}
-
-type RhythmRecord = {
-  name: string;
-  at: number;
-  accuracy: number;
-  /** Settings (and song) of the run, as shown to the player. */
-  label: string;
-};
-
-const RHYTHM_RECORDS_KEY = "punch:rhythm-records";
-
-function ResultCard({
-  game,
-  songName,
-  onRetry,
-  onBack,
-}: {
-  game: GameState;
-  songName: string | null;
-  onRetry: () => void;
-  onBack: () => void;
-}) {
-  const { counts } = game;
-  const label = [
-    CUE_SPEED_LABELS[game.settings.cueSpeed],
-    MODE_LABELS[game.settings.mode].label,
-    DIFFICULTY_LABELS[game.settings.difficulty].label,
-    songName ? `♪ ${songName}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
-  return (
-    <Card className="w-full max-w-xl">
-      <Fanfare />
-      <CardHeader>
-        <CardTitle>운동 끝!</CardTitle>
-        <CardDescription>
-          {CUE_SPEED_LABELS[game.settings.cueSpeed]} ·{" "}
-          {MODE_LABELS[game.settings.mode].label} 모드
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="flex flex-col gap-4">
-        <div>
-          <p className="text-sm text-muted-foreground">정확도</p>
-          <p className="font-heading text-5xl font-semibold tabular-nums">
-            {accuracyOf(game.judged).toFixed(1)}%
-          </p>
-        </div>
-        <dl className="grid grid-cols-2 gap-2 text-center sm:grid-cols-4">
-          {(Object.keys(JUDGEMENT_LABELS) as Judgement[])
-            .filter((j) => j !== "dodge" || game.settings.difficulty === "hard")
-            .map((j) => (
-              <div key={j} className="rounded-lg bg-muted p-3">
-                <dt className="text-sm text-muted-foreground">
-                  {JUDGEMENT_LABELS[j]}
-                </dt>
-                <dd className="text-2xl font-semibold tabular-nums">
-                  {counts[j]}
-                </dd>
-              </div>
-            ))}
-        </dl>
-        <RecordBoard<RhythmRecord>
-          storageKey={RHYTHM_RECORDS_KEY}
-          makeRecord={(name, at) => ({
-            name,
-            at,
-            accuracy: accuracyOf(game.judged),
-            label,
-          })}
-          compare={(a, b) => b.accuracy - a.accuracy || a.at - b.at}
-          show={(record) => ({
-            value: `${record.accuracy.toFixed(1)}%`,
-            detail: record.label,
-          })}
-        />
-      </CardContent>
-      <CardFooter className="gap-2">
-        <Button size="lg" onClick={onRetry}>
-          같은 설정으로 다시 하기
-        </Button>
-        <Button size="lg" variant="outline" onClick={onBack}>
-          설정으로 돌아가기
-        </Button>
-      </CardFooter>
-    </Card>
   );
 }
 
@@ -1175,9 +1210,4 @@ function describeError(error: unknown): string {
     return "다른 프로그램이 카메라를 사용 중입니다. 그 프로그램을 닫고 다시 시도해 주세요.";
   }
   return "손 인식을 준비하지 못했습니다. 인터넷 연결을 확인한 뒤 다시 시도해 주세요.";
-}
-
-function formatTime(ms: number): string {
-  const total = Math.ceil(ms / 1000);
-  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }

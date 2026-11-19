@@ -103,7 +103,14 @@ export function RecordBoard<T extends Saved>({
                     saved?.at === record.at && "ring-2 ring-primary",
                   )}
                 >
-                  <span className="w-6 font-semibold tabular-nums">
+                  <span
+                    className={cn(
+                      "w-6 font-heading text-base font-semibold tabular-nums",
+                      i === 0 && "text-primary",
+                      i === 1 && "text-slate-300",
+                      i === 2 && "text-amber-600",
+                    )}
+                  >
                     {i + 1}
                   </span>
                   <span className="flex-1 truncate">
