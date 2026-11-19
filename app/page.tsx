@@ -27,10 +27,10 @@ function RingLights() {
 
 export default function Home() {
   return (
-    <main className="relative isolate flex flex-1 flex-col items-center px-4 py-10 sm:px-6">
+    <main className="relative isolate flex flex-1 flex-col items-center px-4 py-4 sm:px-6">
       <RingLights />
-      <div className="flex w-full max-w-4xl flex-col items-center gap-10">
-        <HomeLogo className="text-7xl drop-shadow-[0_0_28px_oklch(0.95_0.04_85/0.25)] sm:text-8xl" />
+      <div className="flex w-full max-w-4xl flex-col items-center gap-4">
+        <HomeLogo className="text-4xl drop-shadow-[0_0_28px_oklch(0.95_0.04_85/0.25)] sm:text-5xl" />
         <PunchRhythm />
       </div>
     </main>

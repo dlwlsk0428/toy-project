@@ -56,6 +56,9 @@ export type GameState = {
   nextId: number;
   counts: Counts;
   judged: JudgedLight[];
+  /** Lights in a row without a miss, and the best such run. */
+  combo: number;
+  maxCombo: number;
   history: Record<string, Sample[]>;
   /** Screen height / width, so distances are measured in screen widths on both axes. */
   aspect: number;
@@ -111,6 +114,8 @@ export function createGame(
     nextId: 1,
     counts: { perfect: 0, good: 0, miss: 0, dodge: 0 },
     judged: [],
+    combo: 0,
+    maxCombo: 0,
     history: {},
     aspect,
     pointerRadius,
@@ -133,7 +138,8 @@ export function stepGame(
   }
 
   const history = recordHands(state.history, hands, now);
-  let { nextSpawnAt, nextId, nextBeat, counts, judged } = state;
+  let { nextSpawnAt, nextId, nextBeat, counts, judged, combo, maxCombo } =
+    state;
 
   const lights: Light[] = [];
   for (const light of state.lights) {
@@ -144,6 +150,8 @@ export function stepGame(
     }
     const { judgement, points } = result;
     counts = { ...counts, [judgement]: counts[judgement] + 1 };
+    combo = judgement === "miss" ? 0 : combo + 1;
+    maxCombo = Math.max(maxCombo, combo);
     judged = [
       ...judged,
       { id: light.id, x: light.x, y: light.y, judgement, points, at: now },
@@ -181,6 +189,8 @@ export function stepGame(
     nextBeat,
     counts,
     judged,
+    combo,
+    maxCombo,
     history,
   };
 }
@@ -199,7 +209,7 @@ function judge(
 ): { judgement: Judgement; points: number } | null {
   if (light.kind === "dodge") {
     if (now < light.hitAt) return null;
-    // Without a visible head the dodge cannot be confirmed, so it counts as hit.
+    // Without a visible head the dodge cannot be confirmed, so it counts as a miss.
     const dodged = head !== null && !isInside(head, light, state.aspect, 0);
     return dodged
       ? { judgement: "dodge", points: 100 }

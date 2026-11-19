@@ -77,6 +77,20 @@ describe("취미 모드 판정", () => {
     },
   );
 
+  test("놓치지 않고 이어 치면 콤보가 쌓이고, 놓치면 0으로 돌아가며 최대 콤보는 남는다", () => {
+    let state = start();
+    const hitNext = () => {
+      state = stepGame(state, state.lights[0].hitAt, [onLight(state)], center);
+      state = stepGame(state, state.nextSpawnAt, [], center);
+    };
+    hitNext();
+    hitNext();
+    expect(state.combo).toBe(2);
+    state = stepGame(state, state.lights[0].hitAt + 300, [], center);
+    expect(state.combo).toBe(0);
+    expect(state.maxCombo).toBe(2);
+  });
+
   test("판정 범위가 열리기 전에는 손이 불빛 안에 있어도 판정하지 않는다", () => {
     const game = start();
     const next = stepGame(
