@@ -6,6 +6,7 @@ import QRCode from "qrcode";
 import { Fanfare } from "@/components/fanfare";
 import { RecordBoard } from "@/components/record-board";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -15,7 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
-import { ImageIcon } from "lucide-react";
+import { ImageIcon, LinkIcon } from "lucide-react";
 
 import { HandChallenge, type HandSource } from "./hand-challenge";
 import { CHALLENGE_MS, summarize, toG } from "./power";
@@ -70,7 +71,7 @@ function BonusSession({
   // Release the picked picture when it is replaced or the bonus closes.
   useEffect(
     () => () => {
-      if (image) URL.revokeObjectURL(image);
+      if (image?.startsWith("blob:")) URL.revokeObjectURL(image);
     },
     [image],
   );
@@ -130,9 +131,10 @@ function BonusSession({
           </Button>
         )}
         <span className="text-xs text-muted-foreground">
-          사진은 이 컴퓨터 밖으로 나가지 않습니다.
+          올린 사진은 이 컴퓨터 밖으로 나가지 않습니다.
         </span>
       </div>
+      <ImageUrlForm onLoad={setImage} />
 
       {mode === "hands" ? (
         <HandChallenge createHandSource={createHandSource} image={image} />
@@ -332,5 +334,80 @@ function Stat({ label, value }: { label: string; value: string }) {
       <dt className="text-sm text-muted-foreground">{label}</dt>
       <dd className="text-2xl font-semibold tabular-nums">{value}</dd>
     </div>
+  );
+}
+
+/** For when picking a file does not work: paste a picture's address instead. */
+function ImageUrlForm({ onLoad }: { onLoad: (url: string) => void }) {
+  const [text, setText] = useState("");
+  const [status, setStatus] = useState<
+    { name: "idle" } | { name: "loading" } | { name: "error"; message: string }
+  >({ name: "idle" });
+
+  const load = () => {
+    let url: URL;
+    try {
+      url = new URL(text.trim());
+    } catch {
+      setStatus({ name: "error", message: "https://로 시작하는 이미지 주소를 넣어 주세요." });
+      return;
+    }
+    if (url.protocol !== "https:" && url.protocol !== "http:") {
+      setStatus({ name: "error", message: "https://로 시작하는 이미지 주소를 넣어 주세요." });
+      return;
+    }
+    // Check that it really is a picture before swapping the target.
+    setStatus({ name: "loading" });
+    const probe = new Image();
+    probe.onload = () => {
+      onLoad(url.href);
+      setText("");
+      setStatus({ name: "idle" });
+    };
+    probe.onerror = () =>
+      setStatus({
+        name: "error",
+        message:
+          "이미지를 불러오지 못했습니다. 이미지 자체의 주소인지(이미지 우클릭 → 이미지 주소 복사) 확인해 주세요.",
+      });
+    probe.src = url.href;
+  };
+
+  return (
+    <form
+      className="flex flex-col gap-1"
+      onSubmit={(event) => {
+        event.preventDefault();
+        load();
+      }}
+    >
+      <div className="flex gap-2">
+        <Input
+          aria-label="때릴 이미지 주소"
+          inputMode="url"
+          placeholder="또는 이미지 주소(URL) 붙여넣기"
+          value={text}
+          onChange={(event) => {
+            setText(event.target.value);
+            if (status.name === "error") setStatus({ name: "idle" });
+          }}
+        />
+        <Button
+          type="submit"
+          size="sm"
+          variant="outline"
+          className="h-auto"
+          disabled={!text.trim() || status.name === "loading"}
+        >
+          <LinkIcon aria-hidden />
+          {status.name === "loading" ? "불러오는 중…" : "바꾸기"}
+        </Button>
+      </div>
+      {status.name === "error" && (
+        <p role="alert" className="text-xs text-destructive">
+          {status.message}
+        </p>
+      )}
+    </form>
   );
 }
