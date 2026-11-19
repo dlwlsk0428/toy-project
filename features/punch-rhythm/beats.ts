@@ -165,3 +165,22 @@ function seededRandom(seed: number): () => number {
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
 }
+
+/**
+ * Keeps one section of a song: notes inside it, moved so the section starts at 0 ms.
+ * The section's first seconds stay empty so the first cue has time to appear.
+ */
+export function sliceSong(
+  song: { notes: Note[]; durationMs: number },
+  startMs: number,
+  lengthMs: number,
+): { notes: Note[]; durationMs: number } {
+  const endMs = Math.min(startMs + lengthMs, song.durationMs);
+  const fromMs = startMs + LEAD_IN_SEC * 1000;
+  return {
+    durationMs: Math.max(0, endMs - startMs),
+    notes: song.notes
+      .filter((n) => n.at >= fromMs && n.at < endMs)
+      .map((n) => ({ ...n, at: n.at - startMs })),
+  };
+}

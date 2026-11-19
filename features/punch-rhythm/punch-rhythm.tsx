@@ -35,6 +35,7 @@ import {
 import { CameraImageError, waitForCameraImage } from "./camera";
 import { createHandTracker, type HandTracker } from "./hand-tracker";
 import { HowTo } from "./how-to";
+import { sliceSong } from "./beats";
 import { loadSong, playSong, type LoadedSong } from "./song";
 
 type Phase =
@@ -76,6 +77,16 @@ const DIFFICULTY_LABELS: Record<
 };
 
 const SYNC_LIMIT_MS = 300;
+const SECTION_STEP_MS = 5000;
+const DEFAULT_SECTION_MS = 60_000;
+const SECTION_LENGTHS = [
+  { ms: 30_000, label: "30초" },
+  { ms: 60_000, label: "1분" },
+  { ms: 120_000, label: "2분" },
+  { ms: Number.MAX_SAFE_INTEGER, label: "끝까지" },
+];
+
+type Section = { startMs: number; lengthMs: number };
 const MIN_MINUTES = 1;
 const MAX_MINUTES = 10;
 
@@ -108,6 +119,9 @@ type SongState =
   | { name: "error"; message: string };
 
 type Offset = { x: number; y: number };
+/** A still image of the ready stance and the hands found in it (before offsets). */
+type Photo = { image: string; hands: Hand[] };
+const PHOTO_COUNTDOWN_S = 3;
 // Each hand (keyed by its left/right label) keeps its own correction.
 type Offsets = Record<string, Offset>;
 const NO_OFFSET: Offset = { x: 0, y: 0 };
@@ -125,6 +139,10 @@ export function PunchRhythm() {
   // Song mode runs on the song's own clock; null means the computer clock.
   const songClockRef = useRef<(() => number) | null>(null);
   const [syncMs, setSyncMs] = useState(0);
+  const [section, setSection] = useState<Section>({
+    startMs: 0,
+    lengthMs: DEFAULT_SECTION_MS,
+  });
   const syncRef = useRef(0);
   const changeSync = (value: number) => {
     syncRef.current = value;
@@ -148,6 +166,40 @@ export function PunchRhythm() {
   });
   const rawHandsRef = useRef<Hand[]>([]);
   const draggingRef = useRef<string | null>(null);
+  // Ready-stance photo: pointers are matched on a still image, so hands need not stay still.
+  const [photo, setPhoto] = useState<Photo | null>(null);
+  const photoRef = useRef<Photo | null>(null);
+  const [countdown, setCountdown] = useState<number | null>(null);
+  const changePhoto = (next: Photo | null) => {
+    photoRef.current = next;
+    setPhoto(next);
+  };
+
+  const takePhoto = () => {
+    changePhoto(null);
+    let left = PHOTO_COUNTDOWN_S;
+    setCountdown(left);
+    const tick = () => {
+      left -= 1;
+      if (left > 0) {
+        setCountdown(left);
+        window.setTimeout(tick, 1000);
+        return;
+      }
+      setCountdown(null);
+      const video = videoRef.current;
+      if (!video || video.videoWidth === 0) return;
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext("2d")?.drawImage(video, 0, 0);
+      changePhoto({
+        image: canvas.toDataURL("image/jpeg", 0.85),
+        hands: rawHandsRef.current,
+      });
+    };
+    window.setTimeout(tick, 1000);
+  };
   // While the player adjusts pointers, the start mark is hidden and cannot be punched.
   const calibratingRef = useRef(true);
 
@@ -190,7 +242,15 @@ export function PunchRhythm() {
   const pickSong = async (file: File) => {
     setSong({ name: "analyzing", fileName: file.name });
     try {
-      setSong({ name: "ready", song: await loadSong(file) });
+      const loadedSong = await loadSong(file);
+      setSection({
+        // Start where the drums start, on a 5-second step.
+        startMs:
+          Math.floor(loadedSong.musicStartMs / SECTION_STEP_MS) *
+          SECTION_STEP_MS,
+        lengthMs: DEFAULT_SECTION_MS,
+      });
+      setSong({ name: "ready", song: loadedSong });
     } catch {
       setSong({
         name: "error",
@@ -201,6 +261,9 @@ export function PunchRhythm() {
   };
 
   const loaded = song.name === "ready" ? song.song : null;
+  const part = loaded
+    ? sliceSong(loaded, section.startMs, section.lengthMs)
+    : null;
 
   useEffect(() => stopAll, [stopAll]);
 
@@ -251,7 +314,7 @@ export function PunchRhythm() {
           hands: [],
           head: null,
         };
-        const raw = tracked.hands;
+        const raw = photoRef.current?.hands ?? tracked.hands;
         setHead(tracked.head);
         rawHandsRef.current = raw;
         const { offsets: shifts, radius } = pointerRef.current;
@@ -270,11 +333,14 @@ export function PunchRhythm() {
             return;
           }
           if (loaded && audioRef.current) {
-            const playing = playSong(audioRef.current, loaded.buffer);
+            const playing = playSong(audioRef.current, loaded.buffer, {
+              offsetSec: section.startMs / 1000,
+              durationSec: part!.durationMs / 1000,
+            });
             stopSongRef.current = playing.stop;
             songClockRef.current = playing.songMs;
             // The song starts at its own 0 ms, slightly after this frame.
-            state = createGame(settings, 0, ratio, radius, loaded);
+            state = createGame(settings, 0, ratio, radius, part);
           } else {
             state = createGame(settings, frameAt, ratio, radius, null);
           }
@@ -290,6 +356,8 @@ export function PunchRhythm() {
         frameRef.current = requestAnimationFrame(loop);
       };
       calibratingRef.current = true;
+      changePhoto(null);
+      setCountdown(null);
       setPhase({ name: "calibrating" });
       frameRef.current = requestAnimationFrame(loop);
     } catch (error) {
@@ -298,7 +366,7 @@ export function PunchRhythm() {
     } finally {
       startingRef.current = false;
     }
-  }, [settings, stopAll, loaded]);
+  }, [settings, stopAll, loaded, part, section.startMs]);
 
   if (phase.name === "setup" || phase.name === "error") {
     return (
@@ -310,6 +378,8 @@ export function PunchRhythm() {
         song={song}
         syncMs={syncMs}
         onSyncChange={changeSync}
+        section={section}
+        onSectionChange={setSection}
         onPickSong={pickSong}
         onClearSong={() => setSong({ name: "none" })}
       />
@@ -342,7 +412,7 @@ export function PunchRhythm() {
           {formatTime(
             game
               ? remainingMs(game)
-              : (loaded?.durationMs ?? settings.minutes * 60_000),
+              : (part?.durationMs ?? settings.minutes * 60_000),
           )}
         </span>
       </div>
@@ -369,6 +439,20 @@ export function PunchRhythm() {
             손 인식을 준비하고 있습니다…
           </div>
         )}
+        {phase.name === "calibrating" && photo && (
+          // A data URL taken from the camera; next/image adds nothing here.
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={photo.image}
+            alt="찍은 준비 자세"
+            className="absolute inset-0 size-full -scale-x-100 object-cover"
+          />
+        )}
+        {phase.name === "calibrating" && countdown !== null && (
+          <div className="pointer-events-none absolute inset-0 flex items-center justify-center font-heading text-8xl font-semibold text-white drop-shadow">
+            {countdown}
+          </div>
+        )}
         {phase.name === "ready" && (
           <StartMark
             aspect={aspect}
@@ -388,14 +472,20 @@ export function PunchRhythm() {
           aspect={aspect}
           radius={POINTER_RADIUS[pointerSize]}
           onGrab={
-            phase.name === "calibrating"
+            phase.name === "calibrating" && photo
               ? (id) => (draggingRef.current = id)
               : undefined
           }
         />
         {phase.name === "calibrating" && (
           <p className="pointer-events-none absolute inset-x-0 top-4 text-center text-lg font-medium text-white drop-shadow">
-            포인터를 주먹 위치에 맞춘 뒤 아래의 위치 조정 완료를 누르세요
+            {countdown !== null
+              ? "준비 자세를 잡고 기다리세요"
+              : !photo
+                ? "아래의 준비 자세 찍기를 누르고, 3초 안에 주먹을 들어 준비 자세를 잡으세요"
+                : photo.hands.length === 0
+                  ? "사진에서 손을 찾지 못했습니다. 손이 잘 보이게 다시 찍어 주세요"
+                  : "사진 속 주먹 위치로 흰 포인터를 끌어 맞추세요"}
           </p>
         )}
       </div>
@@ -411,9 +501,17 @@ export function PunchRhythm() {
             )}
             value={pointerSize}
             onChange={changePointerSize}
-            description="손을 든 채로 흰 포인터를 마우스로 끌어 실제 주먹 위치에 맞추세요. 왼손과 오른손을 따로 맞출 수 있습니다."
+            description="준비 자세를 찍으면 3초 뒤 사진이 찍힙니다. 사진 위에서 흰 포인터를 끌어 주먹에 맞추세요. 왼손과 오른손을 따로 맞출 수 있습니다."
           />
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant={photo ? "outline" : "default"}
+              size="lg"
+              onClick={takePhoto}
+              disabled={countdown !== null}
+            >
+              {photo ? "다시 찍기" : "준비 자세 찍기"}
+            </Button>
             <Button
               variant="outline"
               size="lg"
@@ -424,9 +522,12 @@ export function PunchRhythm() {
             </Button>
             <Button
               size="lg"
+              variant={photo ? "default" : "outline"}
+              disabled={countdown !== null}
               onClick={() => {
                 calibratingRef.current = false;
                 draggingRef.current = null;
+                changePhoto(null);
                 setPhase({ name: "ready" });
               }}
             >
@@ -561,6 +662,8 @@ function SetupCard({
   song,
   syncMs,
   onSyncChange,
+  section,
+  onSectionChange,
   onPickSong,
   onClearSong,
 }: {
@@ -571,6 +674,8 @@ function SetupCard({
   song: SongState;
   syncMs: number;
   onSyncChange: (value: number) => void;
+  section: Section;
+  onSectionChange: (section: Section) => void;
   onPickSong: (file: File) => void;
   onClearSong: () => void;
 }) {
@@ -582,7 +687,7 @@ function SetupCard({
         <CardDescription>
           예고 원이 파란 불빛에 딱 맞는 순간 손으로 치세요.{" "}
           {loaded
-            ? `노래 길이(${formatTime(loaded.durationMs)})만큼 운동합니다.`
+            ? `고른 구간(${formatTime(Math.min(section.lengthMs, loaded.durationMs - section.startMs))})만큼 운동합니다.`
             : `한 번의 운동은 ${settings.minutes}분입니다.`}
         </CardDescription>
       </CardHeader>
@@ -621,6 +726,13 @@ function SetupCard({
           description={DIFFICULTY_LABELS[settings.difficulty].description}
         />
         <SongField song={song} onPick={onPickSong} onClear={onClearSong} />
+        {loaded && (
+          <SectionField
+            durationMs={loaded.durationMs}
+            section={section}
+            onChange={onSectionChange}
+          />
+        )}
         {loaded && <SyncField value={syncMs} onChange={onSyncChange} />}
         <MinutesField
           minutes={settings.minutes}
@@ -647,6 +759,54 @@ function SetupCard({
         <HowTo />
       </CardFooter>
     </Card>
+  );
+}
+
+function SectionField({
+  durationMs,
+  section,
+  onChange,
+}: {
+  durationMs: number;
+  section: Section;
+  onChange: (section: Section) => void;
+}) {
+  const lastStart = Math.max(
+    0,
+    Math.floor((durationMs - SECTION_STEP_MS) / SECTION_STEP_MS) *
+      SECTION_STEP_MS,
+  );
+  const end = Math.min(section.startMs + section.lengthMs, durationMs);
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-2">
+        <Label htmlFor="section-start">
+          구간: {formatTime(section.startMs)} – {formatTime(end)}
+        </Label>
+        <input
+          id="section-start"
+          type="range"
+          min={0}
+          max={lastStart}
+          step={SECTION_STEP_MS}
+          value={Math.min(section.startMs, lastStart)}
+          onChange={(event) =>
+            onChange({ ...section, startMs: Number(event.target.value) })
+          }
+          className="w-full accent-primary"
+        />
+      </div>
+      <ChoiceGroup
+        label="구간 길이"
+        options={SECTION_LENGTHS.map((option) => ({
+          value: String(option.ms),
+          label: option.label,
+        }))}
+        value={String(section.lengthMs)}
+        onChange={(value) => onChange({ ...section, lengthMs: Number(value) })}
+        description="긴 노래도 고른 구간만 짧게 할 수 있습니다. 시작 위치는 5초 단위로 옮깁니다."
+      />
+    </div>
   );
 }
 
@@ -770,7 +930,7 @@ function MinutesField({
       />
       <p className="text-sm text-muted-foreground">
         {disabled
-          ? "노래를 고르면 노래 길이만큼 운동합니다."
+          ? "노래를 고르면 고른 구간만큼 운동합니다."
           : `${MIN_MINUTES}분부터 ${MAX_MINUTES}분까지 정할 수 있습니다.`}
       </p>
     </div>

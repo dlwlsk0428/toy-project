@@ -10,7 +10,12 @@ export type LoadedSong = Song & {
   name: string;
   bpm: number;
   buffer: AudioBuffer;
+  /** Where the music (the drums) actually starts, in ms. */
+  musicStartMs: number;
 };
+
+// The last second of a section fades out instead of stopping abruptly.
+const FADE_SEC = 1;
 
 /** Reads an audio file the player picked and finds where the lights should land. */
 export async function loadSong(file: File): Promise<LoadedSong> {
@@ -38,6 +43,7 @@ export async function loadSong(file: File): Promise<LoadedSong> {
     name: file.name.replace(/\.[^.]+$/, ""),
     bpm,
     buffer,
+    musicStartMs: startSec * 1000,
     durationMs: buffer.duration * 1000,
     notes: noteSchedule({
       bpm,
@@ -49,19 +55,24 @@ export async function loadSong(file: File): Promise<LoadedSong> {
 }
 
 /**
- * Plays a decoded song from the start, `delaySec` from now, and returns a clock:
- * ms of the song as the player hears it (output delay subtracted), plus a stop function.
+ * Plays one section of a decoded song, `delaySec` from now, and returns a clock:
+ * ms into the section as the player hears it (output delay subtracted), plus a stop function.
  */
 export function playSong(
   context: AudioContext,
   buffer: AudioBuffer,
+  section: { offsetSec: number; durationSec: number },
   delaySec = 0.1,
 ): { songMs: () => number; stop: () => void } {
   const source = context.createBufferSource();
   source.buffer = buffer;
-  source.connect(context.destination);
+  const gain = context.createGain();
+  source.connect(gain).connect(context.destination);
   const begin = context.currentTime + delaySec;
-  source.start(begin);
+  const end = begin + section.durationSec;
+  gain.gain.setValueAtTime(1, Math.max(begin, end - FADE_SEC));
+  gain.gain.linearRampToValueAtTime(0, end);
+  source.start(begin, section.offsetSec, section.durationSec);
   // Speakers and especially wireless earphones play a little after the audio clock.
   const latency = context.outputLatency || context.baseLatency || 0;
   return {

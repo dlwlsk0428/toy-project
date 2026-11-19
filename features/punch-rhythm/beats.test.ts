@@ -3,6 +3,7 @@ import { describe, expect, test } from "vitest";
 import {
   detectBeats,
   noteSchedule,
+  sliceSong,
   type Note,
 } from "@/features/punch-rhythm/beats";
 
@@ -136,5 +137,27 @@ describe("노트 목록", () => {
       startSec: 5,
     });
     expect(late[0].at).toBeGreaterThanOrEqual(5000);
+  });
+});
+
+describe("노래 구간", () => {
+  const notes: Note[] = [
+    1000, 3000, 10_000, 12_500, 13_000, 20_000, 40_000,
+  ].map((at) => ({
+    at,
+    side: "any",
+  }));
+
+  test("구간 안의 노트만 남기고 구간 시작을 0초로 옮긴다", () => {
+    const part = sliceSong({ notes, durationMs: 60_000 }, 10_000, 15_000);
+    expect(part.durationMs).toBe(15_000);
+    // 10 000 falls in the first 2 s lead-in of the section, so it is dropped.
+    expect(part.notes.map((n) => n.at)).toEqual([2500, 3000, 10_000]);
+  });
+
+  test("구간이 노래 끝을 넘으면 노래 끝에서 멈춘다", () => {
+    const part = sliceSong({ notes, durationMs: 45_000 }, 30_000, 60_000);
+    expect(part.durationMs).toBe(15_000);
+    expect(part.notes.map((n) => n.at)).toEqual([10_000]);
   });
 });
