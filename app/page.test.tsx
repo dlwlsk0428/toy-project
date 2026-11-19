@@ -3,14 +3,10 @@ import { expect, test } from "vitest";
 
 import Home from "@/app/page";
 
-test("홈 화면은 시작 안내 제목과 배포 링크를 보여준다", () => {
+test("홈 화면은 예고 속도와 모드를 기본값(보통, 취미)으로 보여 주고 시작할 수 있다", () => {
   render(<Home />);
 
-  expect(
-    screen.getByRole("heading", { level: 1, name: /To get started/i })
-  ).toBeInTheDocument();
-  expect(screen.getByRole("link", { name: /Deploy Now/i })).toHaveAttribute(
-    "href",
-    expect.stringContaining("vercel.com/new")
-  );
+  expect(screen.getByRole("button", { name: "보통" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "취미" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("button", { name: "시작" })).toBeInTheDocument();
 });
