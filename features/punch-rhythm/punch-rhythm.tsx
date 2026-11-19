@@ -30,10 +30,12 @@ import {
 } from "./game";
 import { CameraImageError, waitForCameraImage } from "./camera";
 import { createHandTracker, type HandTracker } from "./hand-tracker";
+import { HowTo } from "./how-to";
 
 type Phase =
   | { name: "setup" }
   | { name: "preparing" }
+  | { name: "calibrating" }
   | { name: "ready" }
   | { name: "error"; message: string }
   | { name: "playing" }
@@ -46,8 +48,14 @@ const CUE_SPEED_LABELS: Record<CueSpeed, string> = {
 };
 
 const MODE_LABELS: Record<Mode, { label: string; description: string }> = {
-  hobby: { label: "취미", description: "타이밍에 맞춰 손을 불빛에 대면 됩니다." },
-  pro: { label: "선수", description: "손을 빠르게 뻗어 불빛을 쳐야 인정됩니다." },
+  hobby: {
+    label: "취미",
+    description: "타이밍에 맞춰 손을 불빛에 대면 됩니다.",
+  },
+  pro: {
+    label: "선수",
+    description: "손을 빠르게 뻗어 불빛을 쳐야 인정됩니다.",
+  },
 };
 
 const JUDGEMENT_LABELS: Record<Judgement, string> = {
@@ -60,7 +68,11 @@ const FEEDBACK_MS = 600;
 
 type PointerSize = "small" | "medium" | "large";
 // Pointer radius in screen widths. A bigger pointer touches lights from further away.
-const POINTER_RADIUS: Record<PointerSize, number> = { small: 0.015, medium: 0.03, large: 0.06 };
+const POINTER_RADIUS: Record<PointerSize, number> = {
+  small: 0.015,
+  medium: 0.03,
+  large: 0.06,
+};
 const POINTER_SIZE_LABELS: Record<PointerSize, string> = {
   small: "작게",
   medium: "보통",
@@ -90,9 +102,14 @@ export function PunchRhythm() {
   const startRequestedRef = useRef(false);
   const fieldRef = useRef<HTMLDivElement>(null);
   // The running loop reads the latest pointer settings through refs.
-  const pointerRef = useRef({ offsets: NO_OFFSETS, radius: POINTER_RADIUS.medium });
+  const pointerRef = useRef({
+    offsets: NO_OFFSETS,
+    radius: POINTER_RADIUS.medium,
+  });
   const rawHandsRef = useRef<Hand[]>([]);
   const draggingRef = useRef<string | null>(null);
+  // While the player adjusts pointers, the start mark is hidden and cannot be punched.
+  const calibratingRef = useRef(true);
 
   const changeOffsets = (next: Offsets) => {
     pointerRef.current.offsets = next;
@@ -168,9 +185,11 @@ export function PunchRhythm() {
         });
         setHands(seen);
         if (!state) {
-          const punched =
-            draggingRef.current === null && isHandOnTarget(seen, START_TARGET, ratio, radius);
-          if (!startRequestedRef.current && !punched) {
+          const punched = isHandOnTarget(seen, START_TARGET, ratio, radius);
+          if (
+            calibratingRef.current ||
+            (!startRequestedRef.current && !punched)
+          ) {
             frameRef.current = requestAnimationFrame(loop);
             return;
           }
@@ -186,7 +205,8 @@ export function PunchRhythm() {
         }
         frameRef.current = requestAnimationFrame(loop);
       };
-      setPhase({ name: "ready" });
+      calibratingRef.current = true;
+      setPhase({ name: "calibrating" });
       frameRef.current = requestAnimationFrame(loop);
     } catch (error) {
       stopAll();
@@ -221,9 +241,13 @@ export function PunchRhythm() {
     <div className="flex w-full flex-col gap-3">
       <div className="flex items-center justify-between text-sm text-muted-foreground">
         <span>
-          {CUE_SPEED_LABELS[settings.cueSpeed]} · {MODE_LABELS[settings.mode].label} 모드
+          {CUE_SPEED_LABELS[settings.cueSpeed]} ·{" "}
+          {MODE_LABELS[settings.mode].label} 모드
         </span>
-        <span aria-label="남은 시간" className="font-mono text-lg text-foreground tabular-nums">
+        <span
+          aria-label="남은 시간"
+          className="font-mono text-lg text-foreground tabular-nums"
+        >
           {formatTime(game ? remainingMs(game) : 180_000)}
         </span>
       </div>
@@ -234,7 +258,10 @@ export function PunchRhythm() {
         onPointerLeave={() => (draggingRef.current = null)}
         className="relative mx-auto w-full touch-none overflow-hidden rounded-xl bg-black"
         // Keep the whole play area inside the window, whatever the camera's ratio.
-        style={{ aspectRatio: `1 / ${aspect}`, maxWidth: `calc(75vh / ${aspect})` }}
+        style={{
+          aspectRatio: `1 / ${aspect}`,
+          maxWidth: `calc(65vh / ${aspect})`,
+        }}
       >
         <video
           ref={videoRef}
@@ -248,35 +275,62 @@ export function PunchRhythm() {
           </div>
         )}
         {phase.name === "ready" && (
-          <StartMark aspect={aspect} onClick={() => (startRequestedRef.current = true)} />
+          <StartMark
+            aspect={aspect}
+            onClick={() => (startRequestedRef.current = true)}
+          />
         )}
         {game && <PlayField game={game} aspect={aspect} />}
         <HandMarks
           hands={hands}
           aspect={aspect}
           radius={POINTER_RADIUS[pointerSize]}
-          onGrab={phase.name === "ready" ? (id) => (draggingRef.current = id) : undefined}
+          onGrab={
+            phase.name === "calibrating"
+              ? (id) => (draggingRef.current = id)
+              : undefined
+          }
         />
+        {phase.name === "calibrating" && (
+          <p className="pointer-events-none absolute inset-x-0 top-4 text-center text-lg font-medium text-white drop-shadow">
+            포인터를 주먹 위치에 맞춘 뒤 아래의 위치 조정 완료를 누르세요
+          </p>
+        )}
       </div>
-      {phase.name === "ready" && (
+      {phase.name === "calibrating" && (
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
           <ChoiceGroup
             label="포인터 크기"
-            options={(Object.keys(POINTER_SIZE_LABELS) as PointerSize[]).map((value) => ({
-              value,
-              label: POINTER_SIZE_LABELS[value],
-            }))}
+            options={(Object.keys(POINTER_SIZE_LABELS) as PointerSize[]).map(
+              (value) => ({
+                value,
+                label: POINTER_SIZE_LABELS[value],
+              }),
+            )}
             value={pointerSize}
             onChange={changePointerSize}
             description="손을 든 채로 흰 포인터를 마우스로 끌어 실제 주먹 위치에 맞추세요. 왼손과 오른손을 따로 맞출 수 있습니다."
           />
-          <Button
-            variant="outline"
-            onClick={() => changeOffsets(NO_OFFSETS)}
-            disabled={Object.keys(offsets).length === 0}
-          >
-            위치 초기화
-          </Button>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="lg"
+              onClick={() => changeOffsets(NO_OFFSETS)}
+              disabled={Object.keys(offsets).length === 0}
+            >
+              위치 초기화
+            </Button>
+            <Button
+              size="lg"
+              onClick={() => {
+                calibratingRef.current = false;
+                draggingRef.current = null;
+                setPhase({ name: "ready" });
+              }}
+            >
+              위치 조정 완료
+            </Button>
+          </div>
         </div>
       )}
     </div>
@@ -293,7 +347,13 @@ function circle(x: number, y: number, r: number, aspect: number) {
   };
 }
 
-function StartMark({ aspect, onClick }: { aspect: number; onClick: () => void }) {
+function StartMark({
+  aspect,
+  onClick,
+}: {
+  aspect: number;
+  onClick: () => void;
+}) {
   const { x, y, radius } = START_TARGET;
   return (
     <div className="absolute inset-0">
@@ -332,7 +392,7 @@ function HandMarks({
           onPointerDown={onGrab && (() => onGrab(hand.id))}
           className={cn(
             "absolute min-h-6 min-w-6 -translate-1/2 rounded-full border-2 border-white bg-white/40",
-            onGrab && "pointer-events-auto cursor-grab"
+            onGrab && "pointer-events-auto cursor-grab",
           )}
           style={circle(hand.x, hand.y, radius, aspect)}
         />
@@ -346,7 +406,10 @@ function PlayField({ game, aspect }: { game: GameState; aspect: number }) {
 
   let cueRadius = 0;
   if (light) {
-    const left = Math.max(0, (light.hitAt - now) / (light.hitAt - light.spawnAt));
+    const left = Math.max(
+      0,
+      (light.hitAt - now) / (light.hitAt - light.spawnAt),
+    );
     cueRadius = light.radius * (1 + 2 * left);
   }
 
@@ -397,16 +460,19 @@ function SetupCard({
       <CardHeader>
         <CardTitle>웹 펀치 리듬</CardTitle>
         <CardDescription>
-          예고 원이 파란 불빛에 딱 맞는 순간 손으로 치세요. 한 번의 운동은 3분입니다.
+          예고 원이 파란 불빛에 딱 맞는 순간 손으로 치세요. 한 번의 운동은
+          3분입니다.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-6">
         <ChoiceGroup
           label="예고 속도"
-          options={(Object.keys(CUE_SPEED_LABELS) as CueSpeed[]).map((value) => ({
-            value,
-            label: CUE_SPEED_LABELS[value],
-          }))}
+          options={(Object.keys(CUE_SPEED_LABELS) as CueSpeed[]).map(
+            (value) => ({
+              value,
+              label: CUE_SPEED_LABELS[value],
+            }),
+          )}
           value={settings.cueSpeed}
           onChange={(cueSpeed) => onChange({ ...settings, cueSpeed })}
         />
@@ -421,15 +487,19 @@ function SetupCard({
           description={MODE_LABELS[settings.mode].description}
         />
         {error && (
-          <p role="alert" className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive">
+          <p
+            role="alert"
+            className="rounded-lg bg-destructive/10 p-3 text-sm text-destructive"
+          >
             {error}
           </p>
         )}
       </CardContent>
-      <CardFooter>
+      <CardFooter className="gap-2">
         <Button size="lg" onClick={onStart}>
           {error ? "다시 시도" : "시작"}
         </Button>
+        <HowTo />
       </CardFooter>
     </Card>
   );
@@ -463,7 +533,9 @@ function ChoiceGroup<T extends string>({
           </Button>
         ))}
       </div>
-      {description && <p className="text-sm text-muted-foreground">{description}</p>}
+      {description && (
+        <p className="text-sm text-muted-foreground">{description}</p>
+      )}
     </div>
   );
 }
@@ -483,7 +555,8 @@ function ResultCard({
       <CardHeader>
         <CardTitle>운동 끝!</CardTitle>
         <CardDescription>
-          {CUE_SPEED_LABELS[game.settings.cueSpeed]} · {MODE_LABELS[game.settings.mode].label} 모드
+          {CUE_SPEED_LABELS[game.settings.cueSpeed]} ·{" "}
+          {MODE_LABELS[game.settings.mode].label} 모드
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-4">
@@ -496,8 +569,12 @@ function ResultCard({
         <dl className="grid grid-cols-3 gap-2 text-center">
           {(Object.keys(JUDGEMENT_LABELS) as Judgement[]).map((j) => (
             <div key={j} className="rounded-lg bg-muted p-3">
-              <dt className="text-sm text-muted-foreground">{JUDGEMENT_LABELS[j]}</dt>
-              <dd className="text-2xl font-semibold tabular-nums">{counts[j]}</dd>
+              <dt className="text-sm text-muted-foreground">
+                {JUDGEMENT_LABELS[j]}
+              </dt>
+              <dd className="text-2xl font-semibold tabular-nums">
+                {counts[j]}
+              </dd>
             </div>
           ))}
         </dl>
