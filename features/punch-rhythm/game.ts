@@ -135,8 +135,8 @@ export function remainingMs(state: GameState): number {
   return Math.max(0, SESSION_MS - (state.now - state.startedAt));
 }
 
-function isInside(hand: Hand, light: Light, aspect: number): boolean {
-  return Math.hypot(hand.x - light.x, (hand.y - light.y) * aspect) <= light.radius;
+function isInside(hand: Hand, target: Target, aspect: number): boolean {
+  return Math.hypot(hand.x - target.x, (hand.y - target.y) * aspect) <= target.radius;
 }
 
 function isPunch(
@@ -164,4 +164,13 @@ function recordHands(
     next[hand.id] = [...kept, { x: hand.x, y: hand.y, t: now }];
   }
   return next;
+}
+
+export type Target = { x: number; y: number; radius: number };
+
+/** The on-screen "start" mark the player punches to begin. */
+export const START_TARGET: Target = { x: 0.5, y: 0.4, radius: 0.12 };
+
+export function isHandOnTarget(hands: Hand[], target: Target, aspect: number): boolean {
+  return hands.some((hand) => isInside(hand, target, aspect));
 }

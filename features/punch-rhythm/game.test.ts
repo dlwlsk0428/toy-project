@@ -4,6 +4,8 @@ import {
   accuracyOf,
   createGame,
   DEFAULT_SETTINGS,
+  isHandOnTarget,
+  START_TARGET,
   remainingMs,
   stepGame,
   type GameState,
@@ -146,5 +148,25 @@ describe("정확도", () => {
 
   test("불빛이 하나도 없었으면 0%다", () => {
     expect(accuracyOf({ perfect: 0, good: 0, miss: 0 })).toBe(0);
+  });
+});
+
+describe("시작 표시", () => {
+  test("손이 시작 표시 안에 들어오면 친 것으로 본다", () => {
+    const { x, y } = START_TARGET;
+    expect(isHandOnTarget([{ id: "Left", x, y }], START_TARGET, 0.75)).toBe(true);
+  });
+
+  test("손이 시작 표시 밖에 있거나 손이 없으면 치지 않은 것이다", () => {
+    expect(isHandOnTarget([{ id: "Left", x: 0.05, y: 0.9 }], START_TARGET, 0.75)).toBe(false);
+    expect(isHandOnTarget([], START_TARGET, 0.75)).toBe(false);
+  });
+
+  test("세로 거리도 화면 너비 기준으로 잰다", () => {
+    const { x, y, radius } = START_TARGET;
+    // Just outside vertically on a 4:3 screen: radius / aspect is the edge in height units.
+    const hand = { id: "Left", x, y: y + (radius / 0.75) * 1.1 };
+    expect(isHandOnTarget([hand], START_TARGET, 0.75)).toBe(false);
+    expect(isHandOnTarget([hand], START_TARGET, 0.5)).toBe(true);
   });
 });

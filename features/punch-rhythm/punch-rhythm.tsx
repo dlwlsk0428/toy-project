@@ -16,7 +16,9 @@ import {
   accuracyOf,
   createGame,
   DEFAULT_SETTINGS,
+  isHandOnTarget,
   remainingMs,
+  START_TARGET,
   stepGame,
   type CueSpeed,
   type GameState,
@@ -25,11 +27,13 @@ import {
   type Mode,
   type Settings,
 } from "./game";
+import { CameraImageError, waitForCameraImage } from "./camera";
 import { createHandTracker, type HandTracker } from "./hand-tracker";
 
 type Phase =
   | { name: "setup" }
   | { name: "preparing" }
+  | { name: "ready" }
   | { name: "error"; message: string }
   | { name: "playing" }
   | { name: "result"; game: GameState };
@@ -65,6 +69,7 @@ export function PunchRhythm() {
   const trackerRef = useRef<HandTracker | null>(null);
   const frameRef = useRef<number | null>(null);
   const startingRef = useRef(false);
+  const startRequestedRef = useRef(false);
 
   const stopAll = useCallback(() => {
     if (frameRef.current !== null) cancelAnimationFrame(frameRef.current);
@@ -95,17 +100,28 @@ export function PunchRhythm() {
       const video = videoRef.current!;
       video.srcObject = stream;
       await video.play();
-      const ratio = video.videoHeight / video.videoWidth || 9 / 16;
+      await waitForCameraImage(video);
+      const ratio = video.videoHeight / video.videoWidth;
       setAspect(ratio);
 
-      let state = createGame(settings, performance.now(), ratio);
+      // The game starts only when the player punches the start mark (or clicks it).
+      let state: GameState | null = null;
+      startRequestedRef.current = false;
       const loop = () => {
         const now = performance.now();
         // The tracker throws on a frame without size, e.g. while the stream is switching.
         const ready = video.readyState >= 2 && video.videoWidth > 0;
         const seen = (ready && trackerRef.current?.detect(video, now)) || [];
-        state = stepGame(state, now, seen);
         setHands(seen);
+        if (!state) {
+          if (!startRequestedRef.current && !isHandOnTarget(seen, START_TARGET, ratio)) {
+            frameRef.current = requestAnimationFrame(loop);
+            return;
+          }
+          state = createGame(settings, now, ratio);
+          setPhase({ name: "playing" });
+        }
+        state = stepGame(state, now, seen);
         setGame(state);
         if (state.ended) {
           stopAll();
@@ -114,7 +130,7 @@ export function PunchRhythm() {
         }
         frameRef.current = requestAnimationFrame(loop);
       };
-      setPhase({ name: "playing" });
+      setPhase({ name: "ready" });
       frameRef.current = requestAnimationFrame(loop);
     } catch (error) {
       stopAll();
@@ -171,21 +187,62 @@ export function PunchRhythm() {
             손 인식을 준비하고 있습니다…
           </div>
         )}
-        {game && <PlayField game={game} hands={hands} aspect={aspect} />}
+        {phase.name === "ready" && (
+          <StartMark aspect={aspect} onClick={() => (startRequestedRef.current = true)} />
+        )}
+        {game && <PlayField game={game} aspect={aspect} />}
+        <HandMarks hands={hands} />
       </div>
     </div>
   );
 }
 
-function PlayField({ game, hands, aspect }: { game: GameState; hands: Hand[]; aspect: number }) {
-  const { light, now } = game;
-  // Sizes are in screen widths; vertical placement uses the height (y / aspect conversion).
-  const circle = (x: number, y: number, r: number) => ({
+// Sizes are in screen widths; vertical size is converted with the screen ratio.
+function circle(x: number, y: number, r: number, aspect: number) {
+  return {
     left: `${x * 100}%`,
     top: `${y * 100}%`,
     width: `${r * 200}%`,
     height: `${(r * 200) / aspect}%`,
-  });
+  };
+}
+
+function StartMark({ aspect, onClick }: { aspect: number; onClick: () => void }) {
+  const { x, y, radius } = START_TARGET;
+  return (
+    <div className="absolute inset-0">
+      <button
+        type="button"
+        onClick={onClick}
+        className="absolute flex -translate-1/2 items-center justify-center rounded-full border-4 border-blue-200 bg-blue-500/70 text-2xl font-bold text-white shadow-[0_0_32px] shadow-blue-400"
+        style={circle(x, y, radius, aspect)}
+      >
+        시작
+      </button>
+      <p className="absolute inset-x-0 bottom-6 text-center text-lg font-medium text-white drop-shadow">
+        손으로 시작을 치면 운동이 시작됩니다
+      </p>
+    </div>
+  );
+}
+
+function HandMarks({ hands }: { hands: Hand[] }) {
+  return (
+    <div className="pointer-events-none absolute inset-0">
+      {hands.map((hand, i) => (
+        <div
+          key={`${hand.id}-${i}`}
+          data-testid="hand"
+          className="absolute size-6 -translate-1/2 rounded-full border-2 border-white bg-white/40"
+          style={{ left: `${hand.x * 100}%`, top: `${hand.y * 100}%` }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function PlayField({ game, aspect }: { game: GameState; aspect: number }) {
+  const { light, now } = game;
 
   let cueRadius = 0;
   if (light) {
@@ -200,12 +257,12 @@ function PlayField({ game, hands, aspect }: { game: GameState; hands: Hand[]; as
           <div
             data-testid="light"
             className="absolute -translate-1/2 rounded-full bg-blue-500/70 shadow-[0_0_24px] shadow-blue-400"
-            style={circle(light.x, light.y, light.radius)}
+            style={circle(light.x, light.y, light.radius, aspect)}
           />
           <div
             data-testid="cue"
             className="absolute -translate-1/2 rounded-full border-4 border-blue-200"
-            style={circle(light.x, light.y, cueRadius)}
+            style={circle(light.x, light.y, cueRadius, aspect)}
           />
         </>
       )}
@@ -220,14 +277,6 @@ function PlayField({ game, hands, aspect }: { game: GameState; hands: Hand[]; as
             {JUDGEMENT_LABELS[j.judgement]}
           </div>
         ))}
-      {hands.map((hand, i) => (
-        <div
-          key={`${hand.id}-${i}`}
-          data-testid="hand"
-          className="absolute size-6 -translate-1/2 rounded-full border-2 border-white bg-white/40"
-          style={{ left: `${hand.x * 100}%`, top: `${hand.y * 100}%` }}
-        />
-      ))}
     </div>
   );
 }
@@ -366,6 +415,11 @@ function ResultCard({
 }
 
 function describeError(error: unknown): string {
+  if (error instanceof CameraImageError) {
+    return error.reason === "dark"
+      ? "카메라 화면이 검게 나옵니다. 렌즈 가림막이나 노트북의 카메라 끄기 키를 확인한 뒤 다시 시도해 주세요."
+      : "카메라는 연결됐지만 영상이 들어오지 않습니다. 다른 프로그램이 카메라를 쓰고 있지 않은지, Windows 설정의 카메라 개인 정보 보호에서 브라우저가 허용되어 있는지 확인해 주세요.";
+  }
   const name = error instanceof DOMException ? error.name : "";
   if (name === "NotAllowedError") {
     return "웹캠 권한이 거부되었습니다. 브라우저 주소창의 카메라 아이콘에서 권한을 허용한 뒤 다시 시도해 주세요.";
