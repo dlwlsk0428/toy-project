@@ -4,7 +4,13 @@ import { cn } from "@/lib/utils";
  * Anton 글자 폭에 맞춘 C. 속 빈 자리가 곧 잽을 뻗는 복서 실루엣이고,
  * 뻗은 팔이 오른쪽 벽을 뚫어 C의 열린 쪽이 된다. 벽 밖으로 나온 글러브만 골드로 칠한다.
  */
-function BoxerC({ className }: { className?: string }) {
+function BoxerC({
+  className,
+  onFistClick,
+}: {
+  className?: string;
+  onFistClick?: () => void;
+}) {
   return (
     <svg
       viewBox="0 0 80 120"
@@ -51,6 +57,19 @@ function BoxerC({ className }: { className?: string }) {
       />
       {/* 벽 밖으로 튀어나온 글러브 */}
       <rect x="59" y="33" width="16" height="17" rx="6" fill="var(--primary)" />
+      {/* 숨은 버튼: 글러브보다 조금 넓게 잡아 누르기 쉽게 한다 */}
+      {onFistClick && (
+        <rect
+          data-testid="logo-fist"
+          x="52"
+          y="24"
+          width="28"
+          height="35"
+          fill="transparent"
+          className="cursor-pointer"
+          onClick={onFistClick}
+        />
+      )}
     </svg>
   );
 }
@@ -58,9 +77,12 @@ function BoxerC({ className }: { className?: string }) {
 export function BrandLogo({
   className,
   compact = false,
+  onFistClick,
 }: {
   className?: string;
   compact?: boolean;
+  /** Makes the boxer's glove clickable (a hidden easter egg). */
+  onFistClick?: () => void;
 }) {
   return (
     <div
@@ -86,7 +108,8 @@ export function BrandLogo({
         aria-hidden="true"
         className="flex items-baseline justify-center tracking-[0.02em] text-[1em]"
       >
-        PUN<BoxerC />H
+        PUN
+        <BoxerC onFistClick={onFistClick} />H
       </span>
       <span
         aria-hidden="true"

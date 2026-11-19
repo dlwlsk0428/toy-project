@@ -11,7 +11,6 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  DialogTrigger,
 } from "@/components/ui/dialog";
 
 import { CHALLENGE_MS, summarize, toG } from "./power";
@@ -26,14 +25,19 @@ type Stage =
 
 const COUNTDOWN_S = 3;
 
-/** Bonus game on the computer: connect a phone by QR, then punch as hard as you can for 10 s. */
-export function PowerBonus() {
-  const [open, setOpen] = useState(false);
+/**
+ * Bonus game on the computer: connect a phone by QR, then punch as hard as you can for 10 s.
+ * The page decides what opens it.
+ */
+export function PowerBonus({
+  open,
+  onOpenChange,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
-      <DialogTrigger render={<Button size="lg" variant="secondary" />}>
-        보너스: 펀치 세기
-      </DialogTrigger>
+    <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         {open && <BonusSession />}
       </DialogContent>

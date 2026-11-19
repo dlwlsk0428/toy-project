@@ -105,8 +105,7 @@ type Offsets = Record<string, Offset>;
 const NO_OFFSET: Offset = { x: 0, y: 0 };
 const NO_OFFSETS: Offsets = {};
 
-/** `setupExtra` lets the page put another activity next to the start button. */
-export function PunchRhythm({ setupExtra }: { setupExtra?: React.ReactNode } = {}) {
+export function PunchRhythm() {
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
   const [phase, setPhase] = useState<Phase>({ name: "setup" });
   const [game, setGame] = useState<GameState | null>(null);
@@ -252,7 +251,6 @@ export function PunchRhythm({ setupExtra }: { setupExtra?: React.ReactNode } = {
         onChange={setSettings}
         onStart={start}
         error={phase.name === "error" ? phase.message : null}
-        extra={setupExtra}
       />
     );
   }
@@ -496,13 +494,11 @@ function SetupCard({
   onChange,
   onStart,
   error,
-  extra,
 }: {
   settings: Settings;
   onChange: (settings: Settings) => void;
   onStart: () => void;
   error: string | null;
-  extra?: React.ReactNode;
 }) {
   return (
     <Card className="w-full max-w-xl">
@@ -565,7 +561,6 @@ function SetupCard({
           {error ? "다시 시도" : "시작"}
         </Button>
         <HowTo />
-        {extra}
       </CardFooter>
     </Card>
   );
